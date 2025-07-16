@@ -221,8 +221,7 @@ class MainWindow(QMainWindow):
         self.current_worker.error_occurred.connect(self.handle_download_error)
         self.current_worker.finished.connect(self.on_download_finished)
         
-        # Download starten (nur Audio zuerst)
-        self.current_worker.set_download_params(url, download_video=False)
+        self.current_worker.set_download_params(url,download_audio=True, download_video=False)
         self.current_worker.start()
         
     def on_download_progress(self, progress: int, message: str):
@@ -269,7 +268,7 @@ class MainWindow(QMainWindow):
         self.video_worker.error_occurred.connect(self.handle_download_error)
         self.video_worker.finished.connect(self.on_final_download_finished)
         
-        self.video_worker.set_download_params(url, download_video=True)
+        self.video_worker.set_download_params(url,download_audio=False, download_video=True)
         self.video_worker.start()
         
         # Audio-Buffer schließen (nicht mehr benötigt)

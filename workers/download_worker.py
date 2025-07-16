@@ -30,7 +30,7 @@ class DownloadWorker(QThread):
         self.download_service = get_download_service()
         self._should_stop = False
         
-    def set_download_params(self, url: str,download_audio: bool = True, download_video: bool = False):
+    def set_download_params(self, url: str,download_audio: bool = False, download_video: bool = False):
         """Download-Parameter setzen"""
         self.url = url
         self.download_audio = download_audio
@@ -187,11 +187,11 @@ class DownloadManager(QObject):
         
     def start_audio_download(self, url: str):
         """Nur Audio-Download starten"""
-        self._start_download(url,download_video=False)
+        self._start_download(url,download_audio=True, download_video=False)
         
     def start_full_download(self, url: str):
         """Audio + Video Download starten"""
-        self._start_download(url, download_video=True)
+        self._start_download(url,download_audio=True, download_video=True)
         
     def request_video_download(self):
         """Video-Download nachträglich anfordern (nach Audio-Analyse)"""
