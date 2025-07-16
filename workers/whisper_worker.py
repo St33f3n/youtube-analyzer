@@ -4,7 +4,7 @@ Whisper Worker - QThread für Audio-Transkription
 
 from PySide6.QtCore import QThread, Signal
 from typing import Optional
-from io import BytesIO
+from pathlib import Path
 from loguru import logger
 
 from services.whisper_service import get_whisper_service
@@ -24,13 +24,13 @@ class WhisperWorker(QThread):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.audio_buffer = None
+        self.audio_file_path = None          # GEÄNDERT von audio_buffer
         self._should_stop = False
         self.whisper_service = get_whisper_service()
         
-    def set_audio_buffer(self, audio_buffer: BytesIO):
-        """Audio-Buffer für Transkription setzen"""
-        self.audio_buffer = audio_buffer
+    def set_audio_file(self, audio_file_path: Path):
+        """Audio-Datei für Transkription setzen (GEÄNDERT von set_audio_buffer)"""
+        self.audio_file_path = audio_file_path
         self._should_stop = False
         
     def stop_transcription(self):
@@ -42,8 +42,17 @@ class WhisperWorker(QThread):
         try:
             logger.info("Whisper Worker gestartet")
             
-            if not self.audio_buffer:
-                self.error_occurred.emit("❌ Kein Audio-Buffer vorhanden")
+            if not self.audio_file_path:
+                self.error_occurred.emit("❌ Keine Audio-Datei vorhanden")
+                return
+                
+            # Audio-Datei validieren
+            if not self.audio_file_path.exists():
+                self.error_occurred.emit("❌ Audio-Datei existiert nicht")
+                return
+                
+            if self.audio_file_path.stat().st_size < 1000:
+                self.error_occurred.emit("❌ Audio-Datei zu klein")
                 return
                 
             if self._should_stop:
@@ -56,7 +65,7 @@ class WhisperWorker(QThread):
                 self.progress_updated.emit("🎤 Lade Whisper Large-v3 Model...")
                 self.model_loading.emit()
                 
-                # Model wird beim ersten transcribe_audio() automatisch geladen
+                # Model wird beim ersten transcribe_audio_file() automatisch geladen
                 # Hier nur UI-Feedback
                 
             # 2. Model-Info an UI senden
@@ -69,8 +78,11 @@ class WhisperWorker(QThread):
             self.progress_updated.emit("🎤 Transkribiere Audio...")
             self.transcription_started.emit()
             
+            logger.info(f"Starte Whisper-Transkription: {self.audio_file_path}")
+            
             # Transkription ausführen (kann mehrere Minuten dauern)
-            transcript = self.whisper_service.transcribe_audio(self.audio_buffer)
+            # GEÄNDERT: Direkte Datei-Transkription
+            transcript = self.whisper_service.transcribe_audio_file(self.audio_file_path)
             
             if self._should_stop:
                 return
@@ -96,6 +108,14 @@ class WhisperWorker(QThread):
             self.error_occurred.emit(error_msg)
             
         finally:
+            # Audio-Datei nach Transkription löschen
+            try:
+                if hasattr(self, 'audio_file_path') and self.audio_file_path and self.audio_file_path.exists():
+                    self.audio_file_path.unlink()
+                    logger.debug("Audio-Datei nach Transkription gelöscht")
+            except Exception as e:
+                logger.warning(f"Fehler beim Löschen der Audio-Datei: {e}")
+                
             # Model nach einzelnem Video freigeben (wie gewünscht)
             try:
                 self.whisper_service.cleanup_model()
@@ -114,8 +134,8 @@ class WhisperManager:
         self.current_worker = None
         self.whisper_service = get_whisper_service()
         
-    def start_transcription(self, audio_buffer: BytesIO) -> WhisperWorker:
-        """Transkription starten"""
+    def start_transcription(self, audio_file_path: Path) -> WhisperWorker:
+        """Transkription starten (GEÄNDERT von BytesIO zu Path)"""
         # Vorherigen Worker stoppen
         if self.current_worker and self.current_worker.isRunning():
             self.current_worker.stop_transcription()
@@ -123,7 +143,7 @@ class WhisperManager:
             
         # Neuen Worker erstellen
         self.current_worker = WhisperWorker()
-        self.current_worker.set_audio_buffer(audio_buffer)
+        self.current_worker.set_audio_file(audio_file_path)  # GEÄNDERT
         
         return self.current_worker
         

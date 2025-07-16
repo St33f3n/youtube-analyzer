@@ -10,9 +10,12 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QTextCursor, QAction
+from pathlib import Path
 from ui.colors import get_main_stylesheet, get_status_colors
 from workers.download_worker import DownloadManager
 from workers.download_worker import DownloadWorker
+from workers.whisper_worker import WhisperWorker, WhisperManager
+
 
 class MainWindow(QMainWindow):
     """Hauptfenster der Anwendung"""
@@ -23,6 +26,10 @@ class MainWindow(QMainWindow):
         # Download Manager initialisieren
         self.download_manager = DownloadManager(self)
         self.setup_download_connections()
+        
+        # Whisper Manager initialisieren
+        self.whisper_manager = WhisperManager(self)
+        self.current_whisper_worker = None
         
         self.init_ui()
         self.connect_signals()
@@ -221,7 +228,7 @@ class MainWindow(QMainWindow):
         self.current_worker.error_occurred.connect(self.handle_download_error)
         self.current_worker.finished.connect(self.on_download_finished)
         
-        self.current_worker.set_download_params(url,download_audio=True, download_video=False)
+        self.current_worker.set_download_params(url, download_audio=True, download_video=False)
         self.current_worker.start()
         
     def on_download_progress(self, progress: int, message: str):
@@ -241,25 +248,102 @@ class MainWindow(QMainWindow):
         self.add_status_message(f"📋 Video erkannt: {title}", "info")
         self.add_status_message(f"📺 Kanal: {uploader} | ⏱️ Länge: {duration_str}", "info")
         
-    def on_audio_ready(self, audio_buffer):
-        """Audio-Download abgeschlossen - an Analyse weiterleiten"""
+    def on_audio_ready(self, audio_file: Path):
+        """Audio-Download abgeschlossen - Whisper-Transkription starten (GEÄNDERT: Path statt BytesIO)"""
         self.add_status_message("🎵 Audio-Download abgeschlossen", "success")
-        self.add_status_message("🤖 Transkription wird gestartet...", "working")
+        self.add_status_message("🎤 Starte Whisper-Transkription...", "working")
         
-        # TODO: Hier später Whisper-Service aufrufen
-        # Für jetzt simulieren wir positive Analyse nach 3 Sekunden
+        try:
+            # Whisper Worker erstellen und starten
+            self.current_whisper_worker = WhisperWorker(self)
+            
+            # Whisper Signals verbinden
+            self.current_whisper_worker.progress_updated.connect(self.on_whisper_progress)
+            self.current_whisper_worker.model_loading.connect(self.on_whisper_model_loading)
+            self.current_whisper_worker.model_ready.connect(self.on_whisper_model_ready)
+            self.current_whisper_worker.transcription_started.connect(self.on_whisper_transcription_started)
+            self.current_whisper_worker.transcript_ready.connect(self.on_transcript_ready)
+            self.current_whisper_worker.error_occurred.connect(self.handle_whisper_error)
+            self.current_whisper_worker.finished.connect(self.on_whisper_finished)
+            
+            # Audio-Datei an Whisper übergeben und starten (GEÄNDERT)
+            self.current_whisper_worker.set_audio_file(audio_file)
+            self.current_whisper_worker.start()
+            
+        except Exception as e:
+            self.handle_whisper_error(f"Fehler beim Starten der Transkription: {str(e)}")
+
+    def on_whisper_progress(self, message: str):
+        """Whisper-Progress Update"""
+        self.add_status_message(message, "working")
+        
+    def on_whisper_model_loading(self):
+        """Whisper Model wird geladen"""
+        self.progress_bar.setValue(65)
+        self.progress_label.setText("🎤 Lade Whisper Large-v3 Model...")
+        self.add_status_message("📥 Whisper Large-v3 Model wird geladen...", "working")
+        
+    def on_whisper_model_ready(self, model_info: dict):
+        """Whisper Model bereit"""
+        device = model_info.get('device', 'unknown')
+        gpu_name = model_info.get('gpu_name', 'N/A')
+        device_info = f"({gpu_name})" if device == 'cuda' else f"({device.upper()})"
+        
+        self.add_status_message(f"🎤 Whisper Model geladen {device_info}", "success")
+        
+    def on_whisper_transcription_started(self):
+        """Transkription gestartet"""
+        self.progress_bar.setValue(70)
+        self.progress_label.setText("🎤 Transkribiere Audio...")
+        
+    def on_transcript_ready(self, transcript: str):
+        """Transkript fertig - KI-Analyse starten"""
+        transcript_length = len(transcript)
+        self.add_status_message(f"✅ Transkription abgeschlossen ({transcript_length} Zeichen)", "success")
+        self.add_status_message("🤖 Starte KI-Analyse...", "working")
+        
+        self.progress_bar.setValue(80)
+        self.progress_label.setText("🤖 KI-Analyse läuft...")
+        
+        # TODO: Hier später echte KI-Analyse (Ollama) einbauen
+        # Für jetzt simulieren wir positive Analyse
         from PySide6.QtCore import QTimer
         self.analysis_timer = QTimer()
-        self.analysis_timer.timeout.connect(lambda: self.simulate_positive_analysis(audio_buffer))
+        self.analysis_timer.timeout.connect(lambda: self.on_analysis_complete(transcript, 0.85))
         self.analysis_timer.setSingleShot(True)
-        self.analysis_timer.start(3000)
+        self.analysis_timer.start(3000)  # 3 Sekunden Simulation
         
-    def simulate_positive_analysis(self, audio_buffer):
-        """Temporäre Simulation einer positiven Analyse"""
-        self.add_status_message("✅ Analyse positiv - Video wird heruntergeladen", "success")
+    def handle_whisper_error(self, error_message: str):
+        """Whisper-Fehler behandeln"""
+        self.add_status_message(error_message, "error")
+        self.reset_ui_after_download()
         
-        # Video-Download starten
+    def on_whisper_finished(self):
+        """Whisper Worker beendet"""
+        self.add_status_message("🎤 Whisper-Worker beendet", "info")
+
+    def on_analysis_complete(self, transcript: str, analysis_score: float):
+        """KI-Analyse abgeschlossen"""
+        threshold = 0.7  # TODO: Aus Config laden
+        
+        self.add_status_message(f"🤖 Analyse-Score: {analysis_score:.2f} (Threshold: {threshold:.2f})", "info")
+        
+        if analysis_score >= threshold:
+            self.add_status_message("✅ Analyse positiv - Video wird heruntergeladen", "success")
+            self.start_video_download()
+        else:
+            self.add_status_message("❌ Analyse negativ - Video wird nicht heruntergeladen", "warning")
+            self.progress_bar.setValue(100)
+            self.progress_label.setText("❌ Analyse beendet (negativ)")
+            self.reset_ui_after_download()
+            
+    def start_video_download(self):
+        """Video-Download nach positiver Analyse starten"""
         url = self.url_input.text().strip()
+        
+        self.add_status_message("📹 Starte Video-Download...", "working")
+        self.progress_bar.setValue(85)
+        self.progress_label.setText("📹 Video wird heruntergeladen...")
         
         # Neuen Worker für Video erstellen
         self.video_worker = DownloadWorker(self)
@@ -268,13 +352,9 @@ class MainWindow(QMainWindow):
         self.video_worker.error_occurred.connect(self.handle_download_error)
         self.video_worker.finished.connect(self.on_final_download_finished)
         
-        self.video_worker.set_download_params(url,download_audio=False, download_video=True)
+        self.video_worker.set_download_params(url, download_audio=False, download_video=True)
         self.video_worker.start()
         
-        # Audio-Buffer schließen (nicht mehr benötigt)
-        if audio_buffer:
-            audio_buffer.close()
-            
     def on_video_ready(self, video_file):
         """Video-Download abgeschlossen"""
         self.add_status_message(f"📹 Video gespeichert: {video_file.name}", "success")
@@ -328,8 +408,13 @@ class MainWindow(QMainWindow):
             self.video_worker.stop_download()
             self.video_worker = None
             
-    def on_audio_analysis_ready(self, audio_buffer):
-        """Audio für Analyse bereit (Download Manager Signal)"""
+        # Whisper Worker cleanup
+        if hasattr(self, 'current_whisper_worker') and self.current_whisper_worker:
+            self.current_whisper_worker.stop_transcription()
+            self.current_whisper_worker = None
+            
+    def on_audio_analysis_ready(self, audio_file: Path):
+        """Audio für Analyse bereit (Download Manager Signal) - GEÄNDERT: Path statt BytesIO"""
         self.add_status_message("🤖 Audio bereit für KI-Analyse", "working")
         
     def on_video_storage_ready(self, video_file, metadata):
@@ -343,39 +428,6 @@ class MainWindow(QMainWindow):
     def is_valid_youtube_url(self, url):
         """Einfache YouTube URL Validierung"""
         return ("youtube.com/watch" in url or "youtu.be/" in url)
-        
-    def simulate_process(self):
-        """Simuliert den Analyseprozess (für Prototyp)"""
-        # TODO: Durch echten Worker Thread ersetzen
-        self.simulation_step = 0
-        self.simulation_steps = [
-            (20, "📥 Audio wird heruntergeladen...", "working"),
-            (40, "🎤 Transkription läuft...", "working"),
-            (60, "🤖 KI-Analyse läuft...", "working"),
-            (80, "📊 Bewertung läuft...", "working"),
-            (100, "✅ Analyse abgeschlossen!", "success")
-        ]
-        
-        from PySide6.QtCore import QTimer
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_simulation)
-        self.timer.start(1800)  # Alle 1.8 Sekunden
-        
-    def update_simulation(self):
-        """Simulation Schritt aktualisieren"""
-        if self.simulation_step < len(self.simulation_steps):
-            progress, message, status_type = self.simulation_steps[self.simulation_step]
-            self.progress_bar.setValue(progress)
-            self.progress_label.setText(message)
-            self.add_status_message(message, status_type)
-            self.simulation_step += 1
-        else:
-            # Simulation beendet
-            self.timer.stop()
-            self.start_button.setEnabled(True)
-            self.start_button.setText("🚀 Analyse starten")
-            self.progress_label.setText("🌊 Bereit für nächste Analyse")
-            self.add_status_message("🌊 Bereit für nächste Analyse", "info")
         
     def add_status_message(self, message, status_type="info"):
         """Status-Nachricht mit Farbcodierung hinzufügen"""

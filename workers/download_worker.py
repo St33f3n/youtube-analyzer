@@ -5,7 +5,6 @@ Download Worker - QThread für YouTube Downloads
 from PySide6.QtCore import QThread, Signal, QObject
 from typing import Optional, Dict, Any
 from pathlib import Path
-from io import BytesIO
 from loguru import logger
 
 from services.download_service import get_download_service
@@ -17,7 +16,7 @@ class DownloadWorker(QThread):
     # Signals für UI Communication
     progress_updated = Signal(int, str)  # progress_percent, status_message
     video_info_ready = Signal(dict)      # video_metadata
-    audio_ready = Signal(object)         # BytesIO audio_buffer
+    audio_ready = Signal(object)         # Path to audio_file (GEÄNDERT von BytesIO)
     video_ready = Signal(object)         # Path to video_file
     error_occurred = Signal(str)         # error_message
     finished = Signal()                  # download_complete
@@ -30,7 +29,7 @@ class DownloadWorker(QThread):
         self.download_service = get_download_service()
         self._should_stop = False
         
-    def set_download_params(self, url: str,download_audio: bool = False, download_video: bool = False):
+    def set_download_params(self, url: str, download_audio: bool = False, download_video: bool = False):
         """Download-Parameter setzen"""
         self.url = url
         self.download_audio = download_audio
@@ -61,7 +60,7 @@ class DownloadWorker(QThread):
             logger.info(f"Video-Info: {video_info['title']}")
 
             if self.download_audio:
-                # 2. Audio-Download (10% - 60%)
+                # 2. Audio-Download als Temp-File (10% - 60%)
                 self.progress_updated.emit(10, "🎵 Audio wird heruntergeladen...")
             
                 def audio_progress_callback(progress_data):
@@ -93,21 +92,24 @@ class DownloadWorker(QThread):
                         f"🎵 Audio-Download läuft...{speed_text}"
                     )
             
-                audio_buffer = self.download_service.download_audio_to_memory(
+                # GEÄNDERT: Audio als Temp-File statt BytesIO
+                audio_file = self.download_service.download_audio_to_temp_file(
                     self.url, 
                     progress_callback=audio_progress_callback
                 )
             
-                if not audio_buffer:
+                if not audio_file:
                     self.error_occurred.emit("❌ Audio-Download fehlgeschlagen")
                     return
                 
                 if self._should_stop:
-                    audio_buffer.close()
+                    # Temp-Datei löschen bei Abbruch
+                    if audio_file and audio_file.exists():
+                        audio_file.unlink()
                     return
                 
                 self.progress_updated.emit(60, "✅ Audio-Download abgeschlossen")
-                self.audio_ready.emit(audio_buffer)
+                self.audio_ready.emit(audio_file)  # Path statt BytesIO!
                 logger.info("Audio-Download erfolgreich abgeschlossen")
             
             # 3. Video-Download (optional, 70% - 95%)
@@ -175,23 +177,23 @@ class DownloadManager(QObject):
     
     # Manager-Level Signals
     download_completed = Signal(dict)    # Komplette Download-Metadaten
-    analysis_ready = Signal(object)      # Audio-Buffer für Analyse
+    analysis_ready = Signal(object)      # Audio-File für Analyse (GEÄNDERT von BytesIO)
     storage_ready = Signal(object, dict) # Video-File + Metadaten für Storage
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_worker = None
         self.video_metadata = {}
-        self.audio_buffer = None
+        self.audio_file = None           # GEÄNDERT von audio_buffer
         self.video_file = None
         
     def start_audio_download(self, url: str):
         """Nur Audio-Download starten"""
-        self._start_download(url,download_audio=True, download_video=False)
+        self._start_download(url, download_audio=True, download_video=False)
         
     def start_full_download(self, url: str):
         """Audio + Video Download starten"""
-        self._start_download(url,download_audio=True, download_video=True)
+        self._start_download(url, download_audio=True, download_video=True)
         
     def request_video_download(self):
         """Video-Download nachträglich anfordern (nach Audio-Analyse)"""
@@ -204,9 +206,9 @@ class DownloadManager(QObject):
             return
             
         # Neuer Worker nur für Video
-        self._start_download(self.video_metadata.get('webpage_url', ''),download_audio=False, download_video=True)
+        self._start_download(self.video_metadata.get('webpage_url', ''), download_audio=False, download_video=True)
         
-    def _start_download(self, url: str,download_audio: bool , download_video: bool):
+    def _start_download(self, url: str, download_audio: bool, download_video: bool):
         """Internen Download starten"""
         # Vorherigen Worker stoppen
         if self.current_worker and self.current_worker.isRunning():
@@ -223,7 +225,7 @@ class DownloadManager(QObject):
         self.current_worker.finished.connect(self._on_download_finished)
         
         # Download starten
-        self.current_worker.set_download_params(url ,download_audio, download_video)
+        self.current_worker.set_download_params(url, download_audio, download_video)
         self.current_worker.start()
         
     def _on_video_info_ready(self, video_info: Dict[str, Any]):
@@ -231,10 +233,10 @@ class DownloadManager(QObject):
         self.video_metadata = video_info
         logger.info(f"Video-Metadaten empfangen: {video_info['title']}")
         
-    def _on_audio_ready(self, audio_buffer: BytesIO):
-        """Audio-Buffer empfangen"""
-        self.audio_buffer = audio_buffer
-        self.analysis_ready.emit(audio_buffer)
+    def _on_audio_ready(self, audio_file: Path):
+        """Audio-Datei empfangen (GEÄNDERT von BytesIO)"""
+        self.audio_file = audio_file
+        self.analysis_ready.emit(audio_file)
         logger.info("Audio für Analyse bereit")
         
     def _on_video_ready(self, video_file: Path):
@@ -247,7 +249,7 @@ class DownloadManager(QObject):
         """Download abgeschlossen"""
         complete_data = {
             'metadata': self.video_metadata,
-            'audio_buffer': self.audio_buffer,
+            'audio_file': self.audio_file,     # GEÄNDERT von audio_buffer
             'video_file': self.video_file
         }
         self.download_completed.emit(complete_data)
@@ -261,7 +263,13 @@ class DownloadManager(QObject):
     def cleanup(self):
         """Cleanup bei Beendigung"""
         self.stop_current_download()
-        if self.audio_buffer:
-            self.audio_buffer.close()
+        
+        # Audio-Datei löschen falls vorhanden
+        if self.audio_file and self.audio_file.exists():
+            try:
+                self.audio_file.unlink()
+                logger.debug("Audio-Datei im Cleanup gelöscht")
+            except Exception as e:
+                logger.warning(f"Fehler beim Löschen der Audio-Datei: {e}")
             
         # Download Service cleanup wird automatisch gemacht

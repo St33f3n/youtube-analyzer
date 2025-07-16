@@ -1,15 +1,13 @@
 """
-Download Service - yt-dlp Integration für Audio und Video
+Download Service - yt-dlp Integration für Audio und Video (Vereinfacht)
 """
 
 import tempfile
 import yt_dlp
 from pathlib import Path
-from typing import Optional, Dict, Any, BinaryIO, Callable
+from typing import Optional, Dict, Any, Callable
 from io import BytesIO
 from loguru import logger
-import subprocess
-import os
 
 
 class DownloadProgressHook:
@@ -34,7 +32,7 @@ class DownloadProgressHook:
 
 
 class DownloadService:
-    """Service für YouTube Downloads mit yt-dlp"""
+    """Service für YouTube Downloads mit yt-dlp (vereinfacht)"""
     
     def __init__(self):
         self.temp_dir = tempfile.mkdtemp(prefix="youtube_analyzer_")
@@ -73,81 +71,81 @@ class DownloadService:
             logger.error(f"Fehler beim Abrufen der Video-Info: {e}")
             return None
             
-    def download_audio_to_memory(self, url: str, progress_callback: Optional[Callable] = None) -> Optional[BytesIO]:
-        """Download Audio direkt in den Speicher"""
+    def download_audio_to_temp_file(self, url: str, progress_callback: Optional[Callable] = None) -> Optional[Path]:
+        """Download Audio mit DEBUG für UTF-8 Metadaten"""
         try:
-            logger.info(f"Starte Audio-Download (Memory): {url}")
-            
-            # Progress Hook
+            logger.info(f"Starte Audio-Download (Temp File): {url}")
+        
+            # DEBUG: URL auf UTF-8 prüfen
+            logger.info(f"DEBUG: URL ASCII-safe: {url.isascii()}")
+        
             progress_hook = DownloadProgressHook(progress_callback) if progress_callback else None
-            
-            # yt-dlp Optionen für Audio zu stdout
+        
+            # Einfacher ASCII Dateiname
+            temp_audio_file = Path(self.temp_dir) / f"debug_{hash(url) % 10000}.wav"
+        
+            # ERWEITERTE yt-dlp Optionen mit Metadaten-Bereinigung
             ydl_opts = {
                 'format': 'bestaudio/best',
-                'outtmpl': '-',  # stdout
+                'outtmpl': str(temp_audio_file).replace('.wav', '.%(ext)s'),
                 'quiet': True,
                 'no_warnings': True,
-                'extractaudio': True,
-                'audioformat': 'wav',  # Whisper-kompatibel
-                'audioquality': '192K',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'wav',
+                    'preferredquality': '0',
+                }],
+                # DEBUG: Metadaten explizit entfernen
+                'postprocessor_args': [
+                    '-map_metadata', '-1',  # Alle Metadaten löschen
+                    '-fflags', '+bitexact',  # Deterministische Ausgabe
+                    '-avoid_negative_ts', 'make_zero'  # Saubere Timestamps
+                ],
+                'writethumbnail': False,
+                'writeinfojson': False,
+                'writedescription': False,
+                'writesubtitles': False,
             }
-            
+        
             if progress_hook:
                 ydl_opts['progress_hooks'] = [progress_hook]
-                
-            # Audio in Memory-Buffer laden
-            audio_buffer = BytesIO()
             
-            # yt-dlp mit subprocess für stdout capture
-            cmd = [
-                'yt-dlp',
-                '--format', 'bestaudio/best',
-                '--output', '-',
-                '--quiet',
-                '--extract-audio',
-                '--audio-format', 'wav',
-                url
-            ]
+            # Download mit yt-dlp
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
             
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+            # WAV-Datei finden
+            wav_files = list(Path(self.temp_dir).glob(f"debug_{hash(url) % 10000}.wav"))
+        
+            if not wav_files:
+                raise Exception("WAV-Datei nach Download nicht gefunden")
             
-            # Stream in Buffer
-            chunk_size = 8192
-            while True:
-                chunk = process.stdout.read(chunk_size)
-                if not chunk:
-                    break
-                audio_buffer.write(chunk)
-                
-                # Progress simulieren (grob)
-                if progress_callback:
-                    progress_callback({
-                        'status': 'downloading',
-                        'downloaded_bytes': audio_buffer.tell(),
-                        'total_bytes': None,  # Unbekannt bei stdout
-                        'speed': None
-                    })
+            wav_file = wav_files[0]
+        
+            if not wav_file.exists() or wav_file.stat().st_size < 1000:
+                raise Exception(f"WAV-Datei ungültig: {wav_file}")
             
-            return_code = process.wait()
+            # DEBUG: WAV-Datei analysieren
+            logger.info(f"DEBUG: WAV-Datei erstellt: {wav_file}")
+            logger.info(f"DEBUG: WAV-Datei Größe: {wav_file.stat().st_size} bytes")
+        
+            # Erste Bytes der WAV-Datei prüfen
+            with open(wav_file, 'rb') as f:
+                first_bytes = f.read(100)
+                logger.info(f"DEBUG: WAV erste 12 bytes: {first_bytes[:12]}")
             
-            if return_code != 0:
-                stderr = process.stderr.read().decode()
-                raise Exception(f"yt-dlp Fehler: {stderr}")
-                
-            # Buffer zum Lesen vorbereiten
-            audio_buffer.seek(0)
+                # KORRIGIERT: Backslash-Problem vermeiden
+                utf8_byte = b'\xc3'
+                has_utf8 = utf8_byte in first_bytes
+                logger.info(f"DEBUG: Enthält 0xC3: {has_utf8}")
             
-            logger.info(f"Audio-Download erfolgreich: {audio_buffer.tell()} bytes")
-            return audio_buffer
-            
+            logger.info(f"Audio-Download erfolgreich: {wav_file} ({wav_file.stat().st_size} bytes)")
+            return wav_file
+        
         except Exception as e:
             logger.error(f"Fehler beim Audio-Download: {e}")
             return None
-            
+                    
     def download_video_to_file(self, url: str, progress_callback: Optional[Callable] = None) -> Optional[Path]:
         """Download Video zu temporärer Datei"""
         try:
@@ -190,6 +188,42 @@ class DownloadService:
             
         except Exception as e:
             logger.error(f"Fehler beim Video-Download: {e}")
+            return None
+            
+    # ========================================
+    # DEPRECATED: BytesIO-Methoden (für Kompatibilität)
+    # ========================================
+    
+    def download_audio_to_memory(self, url: str, progress_callback: Optional[Callable] = None) -> Optional[BytesIO]:
+        """Download Audio zu BytesIO (DEPRECATED - verwende download_audio_to_temp_file())"""
+        logger.warning("download_audio_to_memory() ist deprecated. Verwende download_audio_to_temp_file().")
+        
+        # Fallback: Temp-Datei erstellen und in BytesIO laden
+        temp_file = self.download_audio_to_temp_file(url, progress_callback)
+        
+        if not temp_file:
+            return None
+            
+        try:
+            # Datei in BytesIO laden
+            audio_buffer = BytesIO()
+            with open(temp_file, 'rb') as f:
+                audio_buffer.write(f.read())
+                
+            # Temp-Datei löschen
+            temp_file.unlink()
+            
+            # Buffer zum Lesen vorbereiten
+            audio_buffer.seek(0)
+            
+            logger.info(f"Audio in BytesIO geladen: {audio_buffer.tell()} bytes")
+            return audio_buffer
+            
+        except Exception as e:
+            logger.error(f"Fehler beim Laden in BytesIO: {e}")
+            # Cleanup bei Fehler
+            if temp_file.exists():
+                temp_file.unlink()
             return None
             
     def cleanup_temp_files(self):
@@ -242,7 +276,7 @@ def get_download_service() -> DownloadService:
 
 # Test-Funktionen
 def test_download_service():
-    """Test des Download-Services"""
+    """Test des Download-Services (vereinfacht)"""
     test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Rick Roll für Test
     
     service = get_download_service()
@@ -252,15 +286,21 @@ def test_download_service():
     if info:
         print(f"✅ Title: {info['title']}")
         print(f"✅ Duration: {info['duration']}s")
+        print(f"✅ Uploader: {info['uploader']}")
     else:
         print("❌ Video Info failed")
         return
         
-    print("\n🎵 Testing Audio Download...")
-    audio_buffer = service.download_audio_to_memory(test_url)
-    if audio_buffer:
-        print(f"✅ Audio downloaded: {audio_buffer.tell()} bytes")
-        audio_buffer.close()
+    print("\n🎵 Testing Audio Download (Temp File)...")
+    audio_file = service.download_audio_to_temp_file(test_url)
+    if audio_file:
+        print(f"✅ Audio downloaded: {audio_file}")
+        print(f"✅ Size: {audio_file.stat().st_size} bytes")
+        print(f"✅ Format: WAV für Whisper bereit")
+        
+        # Cleanup Test-Datei
+        audio_file.unlink()
+        print("✅ Test-Datei gelöscht")
     else:
         print("❌ Audio download failed")
         
@@ -271,6 +311,14 @@ def test_download_service():
         print(f"✅ Size: {video_file.stat().st_size} bytes")
     else:
         print("❌ Video download failed")
+        
+    print("\n🔄 Testing Deprecated BytesIO Method...")
+    audio_buffer = service.download_audio_to_memory(test_url)
+    if audio_buffer:
+        print(f"✅ BytesIO Audio: {audio_buffer.tell()} bytes (deprecated)")
+        audio_buffer.close()
+    else:
+        print("❌ BytesIO download failed")
         
     print("\n🧹 Cleanup...")
     service.cleanup_temp_files()
