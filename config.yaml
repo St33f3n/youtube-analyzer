@@ -8,6 +8,9 @@ secrets:
   nextcloud_service: "NextcloudPW"
   nextcloud_username: "steefen"
 
+whisper:
+  enabled: true  
+
 # Analyse-Regeln mit Prompt-Dateien
 rules:
   fachinhalt:

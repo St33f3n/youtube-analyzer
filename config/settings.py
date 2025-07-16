@@ -54,12 +54,18 @@ class StorageConfig(BaseModel):
     sqlite_path: str = Field(default="data/youtube_analyzer.db", description="SQLite Datenbank Pfad")
 
 
+class WhisperConfig(BaseModel):
+    """Whisper-Konfiguration (minimal)"""
+    enabled: bool = Field(default=True, description="Whisper-Transkription aktivieren")
+
+
 class AppConfig(BaseModel):
     """Haupt-Anwendungskonfiguration"""
     secrets: SecretConfig
     rules: Dict[str, RuleConfig] = Field(..., description="Regel-Definitionen")
     scoring: ScoringConfig
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    whisper: WhisperConfig = Field(default_factory=WhisperConfig)
     
     @validator('rules')
     def validate_rules_weights(cls, v):
