@@ -1,6 +1,7 @@
 """
 Mehrstufiges Logging-System für YouTube Analyzer
 Feature-Level | Function-Level | Error-Level Logging mit strukturierten Daten
+KORREKTE REPARATUR - basierend auf bestehender Codebase
 """
 
 from __future__ import annotations
@@ -18,16 +19,18 @@ from typing import Dict
 from typing import Generator
 from typing import Optional
 from typing import TypeVar
-from typing import Union
-from datetime import datetime
-import psutil
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 from loguru import logger
 
-from yt_types import LogEntry
-from yt_types import LogLevel
-from yt_types import ProcessingStage
-from yt_types import Result, Ok, Err
+# Import der bestehenden Types
+from yt_types import LogEntry, LogLevel, ProcessingStage
 
+# Type Variables
 T = TypeVar("T")
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -345,293 +348,112 @@ class ProcessingLogger:
 # DECORATORS
 # =============================================================================
 
-def log_function_calls(component_logger: ComponentLogger) -> Callable[[F], F]:
-    """Decorator für Function-Level Logging"""
+def log_performance(func: F) -> F:
+    """
+    Decorator für automatisches Performance-Logging ohne Parameter
+    """
     
-    def decorator(func: F) -> F:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            func_name = func.__name__
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        operation_name = func.__name__
+        start_time = time.time()
+        
+        # Logger Discovery: self.logger oder default
+        func_logger = None
+        if args and hasattr(args[0], 'logger'):
+            # Methode in Klasse mit self.logger
+            func_logger = args[0].logger
+        else:
+            # Fallback auf default ComponentLogger
+            func_logger = ComponentLogger("performance")
+        
+        try:
+            # Function execution
+            result = func(*args, **kwargs)
+            duration = time.time() - start_time
             
-            # Function-Entry Logging
-            component_logger.debug(
-                f"Function '{func_name}' called",
+            # Performance-Logging
+            func_logger.info(
+                f"Performance: {operation_name} completed",
+                operation_name=operation_name,
+                duration_seconds=round(duration, 4),
+                success=True,
+            )
+            
+            return result
+        
+        except Exception as e:
+            duration = time.time() - start_time
+            
+            # Error-Performance-Logging
+            func_logger.error(
+                f"Performance: {operation_name} failed",
+                error=e,
+                operation_name=operation_name,
+                duration_seconds=round(duration, 4),
+                success=False,
+            )
+            
+            # Re-raise original exception
+            raise
+    
+    return wrapper  # type: ignore
+
+
+def log_function_calls(func: F) -> F:
+    """
+    Decorator für function_calls (parameterlos)
+    Für DEBUG-Level Function-Entry/Exit Logging
+    """
+    
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        func_name = func.__name__
+        
+        # Logger Discovery
+        func_logger = None
+        if args and hasattr(args[0], 'logger'):
+            func_logger = args[0].logger
+        else:
+            func_logger = ComponentLogger("function_calls")
+        
+        # Function-Entry DEBUG Logging
+        func_logger.debug(
+            f"Function '{func_name}' called",
+            function_name=func_name,
+            args_count=len(args),
+        )
+        
+        start_time = time.time()
+        
+        try:
+            result = func(*args, **kwargs)
+            duration = time.time() - start_time
+            
+            # Function-Success DEBUG Logging
+            func_logger.debug(
+                f"Function '{func_name}' completed successfully",
                 function_name=func_name,
-                function_stage="entry",
-                args_count=len(args),
-                kwargs_count=len(kwargs),
-                kwargs_keys=list(kwargs.keys()),
+                duration_seconds=round(duration, 4),
             )
             
-            start_time = time.time()
-            
-            try:
-                result = func(*args, **kwargs)
-                duration = time.time() - start_time
-                
-                # Function-Success Logging
-                component_logger.debug(
-                    f"Function '{func_name}' completed successfully",
-                    function_name=func_name,
-                    function_stage="success",
-                    duration_seconds=duration,
-                    result_type=type(result).__name__,
-                )
-                
-                return result
-            
-            except Exception as e:
-                duration = time.time() - start_time
-                
-                # Function-Error Logging
-                component_logger.error(
-                    f"Function '{func_name}' failed",
-                    error=e,
-                    function_name=func_name,
-                    function_stage="error",
-                    duration_seconds=duration,
-                )
-                
-                raise
+            return result
         
-        return wrapper  # type: ignore
-    
-    return decorator
-
-
-    F = TypeVar("F", bound=Callable[..., Any])
-
-    def log_performance(func: F) -> F:
-        """
-        Decorator für automatisches Performance-Logging ohne Parameter
-    
-        Features:
-        - Automatische operation_name aus function name
-        - Logger auto-discovery aus self.logger wenn verfügbar
-        - Fallback auf default logger
-        - Strukturiertes Performance-Logging
-        - Result-Type aware logging
-        """
-    
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            operation_name = func.__name__
-            start_time = time.time()
-        
-            # Logger Discovery: self.logger oder default
-            logger = None
-            if args and hasattr(args[0], 'logger'):
-                # Methode in Klasse mit self.logger
-                logger = args[0].logger
-            else:
-                # Fallback auf default ComponentLogger
-                from utils.logging import ComponentLogger
-                logger = ComponentLogger("performance")
-        
-            # Function context für Logging
-            context = {
-                'function_name': func.__name__,
-                'module_name': func.__module__,
-                'args_count': len(args),
-                'kwargs_keys': list(kwargs.keys()),
-                'operation_type': 'method' if args and hasattr(args[0], '__class__') else 'function'
-            }
-        
-            # Optional: Klassen-Info hinzufügen
-            if args and hasattr(args[0], '__class__'):
-                context['class_name'] = args[0].__class__.__name__
-        
-            try:
-                # Function execution
-                result = func(*args, **kwargs)
-                duration = time.time() - start_time
+        except Exception as e:
+            duration = time.time() - start_time
             
-                # Result-Type-aware logging
-                success = True
-                result_info = {}
-            
-                if hasattr(result, '__class__'):
-                    result_info['result_type'] = result.__class__.__name__
-                
-                    # Spezielle Behandlung für Result-Types
-                    if isinstance(result, (Ok, Err)):
-                        success = isinstance(result, Ok)
-                        result_info['result_variant'] = 'Ok' if success else 'Err'
-                    elif hasattr(result, 'value') and hasattr(result, 'error'):
-                        # Duck-typing für Result-ähnliche Objekte
-                        success = hasattr(result, 'value') and result.value is not None
-                        result_info['result_variant'] = 'success' if success else 'error'
-            
-                # Performance-Logging (INFO-Level für Feature-Performance)
-                logger.info(
-                    f"Performance: {operation_name} completed",
-                    extra={
-                        'log_type': 'performance',
-                        'operation_name': operation_name,
-                        'duration_seconds': round(duration, 4),
-                        'duration_ms': round(duration * 1000, 2),
-                        'success': success,
-                        'timestamp': datetime.now().isoformat(),
-                        'context': context,
-                        'result_info': result_info
-                    }
-                )
-            
-                # Debug-Level für Function-Details (bei langsameren Operationen)
-                if duration > 1.0:  # > 1 Sekunde
-                    logger.debug(
-                        f"Slow operation detected: {operation_name}",
-                        extra={
-                            'log_type': 'performance_warning',
-                            'operation_name': operation_name,
-                            'duration_seconds': duration,
-                            'threshold_exceeded': '1_second',
-                            'context': context
-                        }
-                    )
-            
-                return result
-            
-            except Exception as e:
-                duration = time.time() - start_time
-            
-                # Error-Performance-Logging
-                logger.error(
-                    f"Performance: {operation_name} failed",
-                    error=e,
-                    extra={
-                        'log_type': 'performance_error',
-                        'operation_name': operation_name,
-                        'duration_seconds': round(duration, 4),
-                        'duration_ms': round(duration * 1000, 2),
-                        'success': False,
-                        'error_type': type(e).__name__,
-                        'error_message': str(e),
-                        'timestamp': datetime.now().isoformat(),
-                        'context': context,
-                        'stack_trace': traceback.format_exc()
-                    }
-                )
-            
-                # Re-raise original exception
-                raise
-    
-        return wrapper  # type: ignore
-
-
-    def log_function_calls(func: F) -> F:
-        """
-        Korrigierter function_calls decorator (parameterlos)
-        Für DEBUG-Level Function-Entry/Exit Logging
-        """
-    
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            func_name = func.__name__
-        
-            # Logger Discovery
-            logger = None
-            if args and hasattr(args[0], 'logger'):
-                logger = args[0].logger
-            else:
-                from utils.logging import ComponentLogger
-                logger = ComponentLogger("function_calls")
-        
-            # Function-Entry DEBUG Logging
-            logger.debug(
-                f"Function '{func_name}' called",
-                extra={
-                    'log_type': 'function_entry',
-                    'function_name': func_name,
-                    'module_name': func.__module__,
-                    'args_count': len(args),
-                    'kwargs_keys': list(kwargs.keys()),
-                    'class_name': args[0].__class__.__name__ if args and hasattr(args[0], '__class__') else None
-                }
+            # Function-Error DEBUG Logging
+            func_logger.debug(
+                f"Function '{func_name}' failed",
+                function_name=func_name,
+                duration_seconds=round(duration, 4),
+                error_type=type(e).__name__,
             )
-        
-            start_time = time.time()
-        
-            try:
-                result = func(*args, **kwargs)
-                duration = time.time() - start_time
             
-                # Function-Success DEBUG Logging
-                logger.debug(
-                    f"Function '{func_name}' completed successfully",
-                    extra={
-                        'log_type': 'function_success',
-                        'function_name': func_name,
-                        'duration_seconds': round(duration, 4),
-                        'result_type': type(result).__name__ if result is not None else 'None'
-                    }
-                )
-            
-                return result
-        
-            except Exception as e:
-                duration = time.time() - start_time
-            
-                # Function-Error DEBUG Logging
-                logger.debug(
-                    f"Function '{func_name}' failed",
-                    extra={
-                        'log_type': 'function_error',
-                        'function_name': func_name,
-                        'duration_seconds': round(duration, 4),
-                        'error_type': type(e).__name__,
-                        'error_message': str(e)
-                    }
-                )
-            
-                raise
+            raise
     
-        return wrapper  # type: ignore
+    return wrapper  # type: ignore
 
-
-    # Backward compatibility - falls jemand die alte Signatur nutzt
-    def log_performance_with_params(component_logger, operation_name: str):
-        """Backward compatibility wrapper für alte Signatur"""
-        def decorator(func: F) -> F:
-            @wraps(func)
-            def wrapper(*args: Any, **kwargs: Any) -> Any:
-                start_time = time.time()
-            
-                try:
-                    result = func(*args, **kwargs)
-                    duration = time.time() - start_time
-                
-                    component_logger.info(
-                        f"Performance: {operation_name}",
-                        extra={
-                            'operation_name': operation_name,
-                            'duration_seconds': duration,
-                            'success': True,
-                            'function_name': func.__name__
-                        }
-                    )
-                
-                    return result
-            
-                except Exception as e:
-                    duration = time.time() - start_time
-                
-                    component_logger.info(
-                        f"Performance: {operation_name} (failed)",
-                        extra={
-                            'operation_name': operation_name,
-                            'duration_seconds': duration,
-                            'success': False,
-                            'function_name': func.__name__,
-                            'error_type': type(e).__name__
-                        }
-                    )
-                
-                    raise
-        
-            return wrapper  # type: ignore
-    
-        return decorator
 
 # =============================================================================
 # CONTEXT MANAGERS
@@ -655,104 +477,6 @@ def log_feature_execution(
     except Exception as e:
         feature_logger.failed(e)
         raise
-
-
-@contextmanager
-def log_processing_stage(
-    processing_logger: ProcessingLogger,
-    stage: ProcessingStage,
-    **stage_context: Any
-) -> Generator[None, None, None]:
-    """Context Manager für Processing-Stage Logging"""
-    
-    processing_logger.stage_started(stage, **stage_context)
-    
-    try:
-        yield
-        processing_logger.stage_completed()
-    
-    except Exception as e:
-        processing_logger.stage_failed(e)
-        raise
-
-
-# =============================================================================
-# SYSTEM MONITORING
-# =============================================================================
-
-class SystemMonitor:
-    """System-State Monitoring für Error-Context"""
-    
-    def __init__(self, component_logger: ComponentLogger) -> None:
-        self.component_logger = component_logger
-    
-    def get_system_state(self) -> Dict[str, Any]:
-        """Collect system state information"""
-        try:
-            memory = psutil.virtual_memory()
-            cpu_percent = psutil.cpu_percent(interval=1)
-            disk = psutil.disk_usage('/')
-            
-            return {
-                "memory_percent": memory.percent,
-                "memory_available_mb": memory.available // (1024 * 1024),
-                "cpu_percent": cpu_percent,
-                "disk_percent": disk.percent,
-                "disk_free_gb": disk.free // (1024 * 1024 * 1024),
-                "process_count": len(psutil.pids()),
-                "timestamp": datetime.now().isoformat(),
-            }
-        
-        except Exception as e:
-            self.component_logger.warning(
-                "Failed to collect system state",
-                error=str(e)
-            )
-            return {"error": "system_state_unavailable"}
-    
-    def log_system_state(self) -> None:
-        """Log current system state"""
-        system_state = self.get_system_state()
-        
-        self.component_logger.info(
-            "System state snapshot",
-            system_state=system_state,
-            log_type="system_monitoring",
-        )
-
-
-# =============================================================================
-# RESULT LOGGING HELPERS
-# =============================================================================
-
-def log_result(
-    component_logger: ComponentLogger,
-    result: Result[T, Exception],
-    operation_name: str,
-    **context: Any
-) -> Result[T, Exception]:
-    """Log Result-Type outcomes"""
-    
-    if isinstance(result, tuple) and len(result) == 2:
-        # Handle Ok/Err tuple format
-        if result[0] is not None:  # Ok case
-            component_logger.info(
-                f"Operation '{operation_name}' succeeded",
-                operation_name=operation_name,
-                result_type="success",
-                **context
-            )
-        else:  # Err case
-            error = result[1]
-            component_logger.error(
-                f"Operation '{operation_name}' failed",
-                error=error,
-                operation_name=operation_name,
-                result_type="error",
-                **context
-            )
-    
-    return result
 
 
 # =============================================================================

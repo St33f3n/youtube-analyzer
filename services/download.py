@@ -1,6 +1,7 @@
 """
 Download Service - yt-dlp Integration mit Result-Types und vollständigen Type-Hints
 Vollständig überarbeitet nach Quality-Gate-Standards
+REPARIERTE IMPORTS - Konsistente direkte Imports aus Hauptverzeichnis
 """
 
 from __future__ import annotations
@@ -14,17 +15,18 @@ from typing import Optional
 
 import yt_dlp
 
-from youtube_analyzer.types import AudioMetadata
-from youtube_analyzer.types import DownloadError
-from youtube_analyzer.types import Err
-from youtube_analyzer.types import Ok
-from youtube_analyzer.types import ProgressCallback
-from youtube_analyzer.types import Result
-from youtube_analyzer.types import VideoMetadata
-from youtube_analyzer.types import validate_youtube_url
-from youtube_analyzer.utils.logging import ComponentLogger
-from youtube_analyzer.utils.logging import log_function_calls
-from youtube_analyzer.utils.logging import log_performance
+# REPARIERTE IMPORTS - Direkte Imports aus Hauptverzeichnis
+from yt_types import AudioMetadata
+from yt_types import DownloadError
+from yt_types import Err
+from yt_types import Ok
+from yt_types import ProgressCallback
+from yt_types import Result
+from yt_types import VideoMetadata
+from yt_types import validate_youtube_url
+from utils.logging import ComponentLogger
+from utils.logging import log_function_calls
+from utils.logging import log_performance
 
 
 class DownloadProgressHandler:
@@ -469,8 +471,8 @@ def create_download_service(temp_dir: Optional[Path] = None) -> DownloadService:
 
 def test_download_service() -> None:
     """Test-Funktion für Download-Service"""
-    from youtube_analyzer.utils.logging import get_development_config
-    from youtube_analyzer.utils.logging import setup_logging
+    from utils.logging import get_development_config
+    from utils.logging import setup_logging
     
     # Setup logging für Test
     setup_logging(get_development_config())

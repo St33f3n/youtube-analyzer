@@ -1,6 +1,7 @@
 """
 Whisper Service - faster-whisper Integration mit Result-Types und vollständigen Type-Hints
 Vollständig überarbeitet nach Quality-Gate-Standards
+REPARIERTE IMPORTS - Konsistente direkte Imports
 """
 
 from __future__ import annotations
@@ -16,18 +17,19 @@ from typing import Optional
 import torch
 from faster_whisper import WhisperModel
 
-from youtube_analyzer.types import AudioMetadata
-from youtube_analyzer.types import Err
-from youtube_analyzer.types import GPUInfo
-from youtube_analyzer.types import Ok
-from youtube_analyzer.types import Result
-from youtube_analyzer.types import ServiceStatus
-from youtube_analyzer.types import TranscriptionError
-from youtube_analyzer.types import TranscriptionResult
-from youtube_analyzer.types import validate_path
-from youtube_analyzer.utils.logging import ComponentLogger
-from youtube_analyzer.utils.logging import log_function_calls
-from youtube_analyzer.utils.logging import log_performance
+# REPARIERTE IMPORTS - Direkte Imports aus Hauptverzeichnis
+from yt_types import AudioMetadata
+from yt_types import Err
+from yt_types import GPUInfo
+from yt_types import Ok
+from yt_types import Result
+from yt_types import ServiceStatus
+from yt_types import TranscriptionError
+from yt_types import TranscriptionResult
+from yt_types import validate_path
+from utils.logging import ComponentLogger
+from utils.logging import log_function_calls
+from utils.logging import log_performance
 
 
 class WhisperService:
@@ -471,8 +473,8 @@ def create_whisper_service(model_name: str = "large-v3") -> WhisperService:
 
 def test_whisper_service() -> None:
     """Test-Funktion für Whisper-Service"""
-    from youtube_analyzer.utils.logging import get_development_config
-    from youtube_analyzer.utils.logging import setup_logging
+    from utils.logging import get_development_config
+    from utils.logging import setup_logging
     
     # Setup logging für Test
     setup_logging(get_development_config())
