@@ -1,0 +1,254 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "youtube-analyzer"
+version = "0.2.0"
+description = "Intelligente YouTube-Video-Analyse für persönliches Wissensmanagement"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "YouTube Analyzer Team", email = "dev@youtube-analyzer.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.11"
+
+# Core Dependencies (installierbar via pip/uv)
+dependencies = [
+    # GUI Framework
+    "PySide6>=6.6.0",
+    
+    # Configuration & Validation
+    "pydantic>=2.5.0",
+    "PyYAML>=6.0.1",
+    
+    # Security & Credentials
+    "keyring>=24.3.0",
+    
+    # Logging & Monitoring
+    "loguru>=0.7.2",
+    
+    # HTTP & Networking
+    "requests>=2.31.0",
+    "httpx>=0.26.0",
+    
+    # AI & ML Libraries
+    "torch>=2.1.0",
+    "faster-whisper>=0.10.0",
+    
+    # File & Path Operations
+    "pathlib2>=2.3.7; python_version<'3.11'",
+    
+    # Data Processing
+    "numpy>=1.24.0",
+    
+    # Testing Support
+    "typing-extensions>=4.8.0",
+]
+
+# Optional Dependencies für verschiedene Use-Cases
+[project.optional-dependencies]
+# Development Dependencies
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-qt>=4.2.0",
+    "mypy>=1.7.0",
+    "ruff>=0.1.7",
+    "pre-commit>=3.6.0",
+]
+
+# CUDA Support (für NVIDIA GPUs)
+cuda = [
+    "torch[cuda]>=2.1.0",
+]
+
+# ROCm Support (für AMD GPUs)  
+rocm = [
+    "torch[rocm]>=2.1.0",
+]
+
+# Deployment Dependencies
+deploy = [
+    "cx-Freeze>=6.15.0",
+    "PyInstaller>=6.2.0",
+]
+
+# All Dependencies
+all = [
+    "youtube-analyzer[dev,cuda,deploy]",
+]
+
+[project.scripts]
+# CLI Entry Points
+youtube-analyzer = "youtube_analyzer.cli:main"
+yt-analyzer = "youtube_analyzer.cli:main"
+
+# GUI Entry Point  
+youtube-analyzer-gui = "youtube_analyzer.main:main"
+
+[project.urls]
+Homepage = "https://github.com/user/youtube-analyzer"
+Documentation = "https://youtube-analyzer.readthedocs.io/"
+Repository = "https://github.com/user/youtube-analyzer"
+Issues = "https://github.com/user/youtube-analyzer/issues"
+
+# Tool Configuration
+[tool.hatch.build.targets.wheel]
+packages = ["youtube_analyzer"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/youtube_analyzer",
+    "/prompts",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
+
+# Ruff Configuration (Linting & Formatting)
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings  
+    "F",   # pyflakes
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "I",   # isort
+    "N",   # pep8-naming
+    "S",   # flake8-bandit
+    "T20", # flake8-print
+    "PT",  # flake8-pytest-style
+    "Q",   # flake8-quotes
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+    "TID", # flake8-tidy-imports
+    "ARG", # flake8-unused-arguments
+    "DTZ", # flake8-datetimez
+    "ERA", # eradicate
+]
+ignore = [
+    "S101",   # assert statements (verwendet in Tests)
+    "T201",   # print statements (erlaubt für CLI)
+    "B008",   # function call in argument defaults
+    "RET504", # unnecessary variable assignment before return
+]
+
+[tool.ruff.per-file-ignores]
+"tests/*" = ["S101", "ARG001", "PLR2004"]
+"youtube_analyzer/cli.py" = ["T201"]
+
+[tool.ruff.isort]
+known-first-party = ["youtube_analyzer"]
+force-single-line = true
+
+# MyPy Configuration (Type Checking)
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_optional = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+disallow_untyped_calls = false  # Für externe Libraries ohne Types
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = false  # Für Standard-Decorators
+
+# External Dependencies ohne Type-Hints
+[[tool.mypy.overrides]]
+module = [
+    "faster_whisper.*",
+    "yt_dlp.*",
+    "PySide6.*",
+    "loguru.*",
+]
+ignore_missing_imports = true
+
+# Pytest Configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=youtube_analyzer",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-fail-under=80",
+    "-v",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "gpu: marks tests requiring GPU",
+    "external: marks tests requiring external services",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+# Coverage Configuration
+[tool.coverage.run]
+source = ["youtube_analyzer"]
+omit = [
+    "tests/*",
+    "youtube_analyzer/__main__.py",
+    "youtube_analyzer/cli.py",  # CLI hat eigene Integration-Tests
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+# Pre-commit Hooks Configuration
+[tool.pre-commit]
+default_stages = ["commit", "push"]
+
+[[tool.pre-commit.repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "v0.1.7"
+hooks = [
+    {id = "ruff", args = ["--fix"]},
+    {id = "ruff-format"},
+]
+
+[[tool.pre-commit.repos]]
+repo = "https://github.com/pre-commit/mirrors-mypy"
+rev = "v1.7.1"
+hooks = [
+    {id = "mypy", additional_dependencies = ["types-PyYAML", "types-requests"]},
+]

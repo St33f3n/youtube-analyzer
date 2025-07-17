@@ -1,275 +1,565 @@
 """
-Download Worker - QThread für YouTube Downloads
+Workers - QThread Workers für Download und Whisper
+Vollständig überarbeitet mit Result-Types und vollständigen Type-Hints
 """
 
-from PySide6.QtCore import QThread, Signal, QObject
-from typing import Optional, Dict, Any
-from pathlib import Path
-from loguru import logger
+from __future__ import annotations
 
-from services.download_service import get_download_service
+from pathlib import Path
+from typing import Optional
+
+from PySide6.QtCore import QThread
+from PySide6.QtCore import Signal
+
+from youtube_analyzer.services.download import get_download_service
+from youtube_analyzer.services.whisper import get_whisper_service
+from youtube_analyzer.types import AudioMetadata
+from youtube_analyzer.types import Err
+from youtube_analyzer.types import Ok
+from youtube_analyzer.types import TranscriptionResult
+from youtube_analyzer.types import VideoMetadata
+from youtube_analyzer.utils.logging import ComponentLogger
+from youtube_analyzer.utils.logging import log_function_calls
 
 
 class DownloadWorker(QThread):
-    """Worker Thread für YouTube Downloads"""
+    """Worker Thread für YouTube Downloads mit Result-Types"""
     
     # Signals für UI Communication
-    progress_updated = Signal(int, str)  # progress_percent, status_message
-    video_info_ready = Signal(dict)      # video_metadata
-    audio_ready = Signal(object)         # Path to audio_file (GEÄNDERT von BytesIO)
-    video_ready = Signal(object)         # Path to video_file
-    error_occurred = Signal(str)         # error_message
-    finished = Signal()                  # download_complete
+    progress_updated = Signal(int, str)    # progress_percent, status_message
+    video_info_ready = Signal(object)      # VideoMetadata
+    audio_ready = Signal(object)           # AudioMetadata
+    video_ready = Signal(str)              # video_file_path
+    error_occurred = Signal(str)           # error_message
+    finished = Signal()                    # download_complete
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        
+        self.logger = ComponentLogger("DownloadWorker")
+        self.download_service = get_download_service()
+        
+        # Parameters
         self.url = ""
         self.download_audio = False
         self.download_video = False
-        self.download_service = get_download_service()
         self._should_stop = False
         
-    def set_download_params(self, url: str, download_audio: bool = False, download_video: bool = False):
+        self.logger.debug("Download worker initialized")
+    
+    @log_function_calls
+    def set_download_params(
+        self,
+        url: str,
+        download_audio: bool = False,
+        download_video: bool = False,
+    ) -> None:
         """Download-Parameter setzen"""
         self.url = url
         self.download_audio = download_audio
         self.download_video = download_video
         self._should_stop = False
         
-    def stop_download(self):
+        self.logger.info(
+            "Download parameters set",
+            url=url,
+            download_audio=download_audio,
+            download_video=download_video,
+        )
+    
+    def stop_download(self) -> None:
         """Download abbrechen"""
         self._should_stop = True
-        
-    def run(self):
+        self.logger.info("Download stop requested")
+    
+    def run(self) -> None:
         """Haupt-Download-Prozess"""
         try:
-            logger.info(f"Download Worker gestartet für: {self.url}")
+            self.logger.info(
+                "Download worker started",
+                url=self.url,
+                audio=self.download_audio,
+                video=self.download_video,
+            )
             
             # 1. Video-Informationen abrufen (5%)
             self.progress_updated.emit(5, "📋 Video-Informationen abrufen...")
-            video_info = self.download_service.get_video_info(self.url)
             
-            if not video_info:
-                self.error_occurred.emit("❌ Video-Informationen konnten nicht abgerufen werden")
+            info_result = self.download_service.get_video_info(self.url)
+            
+            if isinstance(info_result, Err):
+                self.error_occurred.emit(f"❌ Video-Info Fehler: {info_result.error.message}")
                 return
-                
+            
             if self._should_stop:
                 return
-                
-            self.video_info_ready.emit(video_info)
-            logger.info(f"Video-Info: {video_info['title']}")
-
-            if self.download_audio:
-                # 2. Audio-Download als Temp-File (10% - 60%)
-                self.progress_updated.emit(10, "🎵 Audio wird heruntergeladen...")
             
-                def audio_progress_callback(progress_data):
-                    """Progress-Callback für Audio-Download"""
+            video_info = info_result.value
+            self.video_info_ready.emit(video_info)
+            
+            self.logger.info(
+                "Video info retrieved",
+                video_id=video_info.id,
+                title=video_info.title,
+                duration=video_info.duration,
+            )
+            
+            # 2. Audio-Download (optional, 10% - 60%)
+            if self.download_audio:
+                self.progress_updated.emit(10, "🎵 Audio wird heruntergeladen...")
+                
+                def audio_progress(progress: int, message: str) -> None:
                     if self._should_stop:
                         return
                     
-                    # Audio-Download: 10% - 60% der Gesamt-Progress
-                    base_progress = 10
-                    max_progress = 60
+                    # Mappe auf 10-60% Bereich
+                    mapped_progress = 10 + int((progress / 100) * 50)
+                    self.progress_updated.emit(mapped_progress, f"🎵 {message}")
                 
-                    if progress_data.get('total_bytes'):
-                        downloaded = progress_data.get('downloaded_bytes', 0)
-                        total = progress_data['total_bytes']
-                        audio_percent = (downloaded / total) * 100
-                    else:
-                        # Fallback wenn total_bytes unbekannt
-                        audio_percent = 50  # Schätzung
-                    
-                    overall_progress = base_progress + int((audio_percent / 100) * (max_progress - base_progress))
-                
-                    speed_text = ""
-                    if progress_data.get('speed'):
-                        speed_mb = progress_data['speed'] / (1024 * 1024)
-                        speed_text = f" ({speed_mb:.1f} MB/s)"
-                    
-                    self.progress_updated.emit(
-                        overall_progress, 
-                        f"🎵 Audio-Download läuft...{speed_text}"
-                    )
-            
-                # GEÄNDERT: Audio als Temp-File statt BytesIO
-                audio_file = self.download_service.download_audio_to_temp_file(
-                    self.url, 
-                    progress_callback=audio_progress_callback
+                audio_result = self.download_service.download_audio(
+                    self.url,
+                    progress_callback=audio_progress,
                 )
-            
-                if not audio_file:
-                    self.error_occurred.emit("❌ Audio-Download fehlgeschlagen")
+                
+                if isinstance(audio_result, Err):
+                    self.error_occurred.emit(f"❌ Audio-Download Fehler: {audio_result.error.message}")
                     return
                 
                 if self._should_stop:
-                    # Temp-Datei löschen bei Abbruch
-                    if audio_file and audio_file.exists():
-                        audio_file.unlink()
                     return
                 
+                audio_metadata = audio_result.value
                 self.progress_updated.emit(60, "✅ Audio-Download abgeschlossen")
-                self.audio_ready.emit(audio_file)  # Path statt BytesIO!
-                logger.info("Audio-Download erfolgreich abgeschlossen")
+                self.audio_ready.emit(audio_metadata)
+                
+                self.logger.info(
+                    "Audio download completed",
+                    file_path=str(audio_metadata.file_path),
+                    file_size=audio_metadata.file_size,
+                )
             
             # 3. Video-Download (optional, 70% - 95%)
             if self.download_video:
                 self.progress_updated.emit(70, "📹 Video wird heruntergeladen...")
                 
-                def video_progress_callback(progress_data):
-                    """Progress-Callback für Video-Download"""
+                def video_progress(progress: int, message: str) -> None:
                     if self._should_stop:
                         return
-                        
-                    # Video-Download: 70% - 95% der Gesamt-Progress
-                    base_progress = 70
-                    max_progress = 95
                     
-                    if progress_data.get('total_bytes'):
-                        downloaded = progress_data.get('downloaded_bytes', 0)
-                        total = progress_data['total_bytes']
-                        video_percent = (downloaded / total) * 100
-                    else:
-                        video_percent = 50  # Schätzung
-                        
-                    overall_progress = base_progress + int((video_percent / 100) * (max_progress - base_progress))
-                    
-                    speed_text = ""
-                    if progress_data.get('speed'):
-                        speed_mb = progress_data['speed'] / (1024 * 1024)
-                        speed_text = f" ({speed_mb:.1f} MB/s)"
-                        
-                    self.progress_updated.emit(
-                        overall_progress,
-                        f"📹 Video-Download läuft...{speed_text}"
-                    )
+                    # Mappe auf 70-95% Bereich
+                    mapped_progress = 70 + int((progress / 100) * 25)
+                    self.progress_updated.emit(mapped_progress, f"📹 {message}")
                 
-                video_file = self.download_service.download_video_to_file(
+                video_result = self.download_service.download_video(
                     self.url,
-                    progress_callback=video_progress_callback
+                    progress_callback=video_progress,
                 )
                 
-                if not video_file:
-                    self.error_occurred.emit("❌ Video-Download fehlgeschlagen")
+                if isinstance(video_result, Err):
+                    self.error_occurred.emit(f"❌ Video-Download Fehler: {video_result.error.message}")
                     return
-                    
+                
                 if self._should_stop:
                     return
-                    
+                
+                video_path = video_result.value
                 self.progress_updated.emit(95, "✅ Video-Download abgeschlossen")
-                self.video_ready.emit(video_file)
-                logger.info(f"Video-Download erfolgreich: {video_file}")
+                self.video_ready.emit(str(video_path))
+                
+                self.logger.info(
+                    "Video download completed",
+                    video_path=str(video_path),
+                    file_size=video_path.stat().st_size,
+                )
             
             # 4. Abschluss (100%)
-            self.progress_updated.emit(100, "🎉 Download vollständig abgeschlossen!")
-            
+            if not self._should_stop:
+                self.progress_updated.emit(100, "🎉 Download vollständig!")
+                
+                self.logger.info(
+                    "Download worker completed successfully",
+                    url=self.url,
+                    audio_downloaded=self.download_audio,
+                    video_downloaded=self.download_video,
+                )
+        
         except Exception as e:
-            logger.error(f"Fehler im Download Worker: {e}")
-            self.error_occurred.emit(f"❌ Unerwarteter Fehler: {str(e)}")
-            
+            error_msg = f"❌ Unerwarteter Download-Fehler: {str(e)}"
+            self.logger.error(
+                "Download worker failed with exception",
+                error=e,
+                url=self.url,
+            )
+            self.error_occurred.emit(error_msg)
+        
         finally:
             self.finished.emit()
-            logger.info("Download Worker beendet")
+            self.logger.info("Download worker finished")
 
 
-class DownloadManager(QObject):
-    """Manager für Download-Operationen mit Worker-Koordination"""
+class WhisperWorker(QThread):
+    """Worker Thread für Whisper Audio-Transkription mit Result-Types"""
     
-    # Manager-Level Signals
-    download_completed = Signal(dict)    # Komplette Download-Metadaten
-    analysis_ready = Signal(object)      # Audio-File für Analyse (GEÄNDERT von BytesIO)
-    storage_ready = Signal(object, dict) # Video-File + Metadaten für Storage
+    # Signals für UI Communication
+    progress_updated = Signal(str)              # status_message
+    model_loading = Signal()                    # Model wird geladen
+    model_ready = Signal(dict)                  # Model-Info
+    transcription_started = Signal()            # Transkription gestartet
+    transcript_ready = Signal(object)           # TranscriptionResult
+    error_occurred = Signal(str)                # error_message
+    finished = Signal()                         # Worker beendet
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.current_worker = None
-        self.video_metadata = {}
-        self.audio_file = None           # GEÄNDERT von audio_buffer
-        self.video_file = None
         
-    def start_audio_download(self, url: str):
-        """Nur Audio-Download starten"""
-        self._start_download(url, download_audio=True, download_video=False)
+        self.logger = ComponentLogger("WhisperWorker")
+        self.whisper_service = get_whisper_service()
         
-    def start_full_download(self, url: str):
-        """Audio + Video Download starten"""
-        self._start_download(url, download_audio=True, download_video=True)
+        # Parameters
+        self.audio_metadata: Optional[AudioMetadata] = None
+        self._should_stop = False
         
-    def request_video_download(self):
-        """Video-Download nachträglich anfordern (nach Audio-Analyse)"""
-        if self.current_worker and self.current_worker.isRunning():
-            logger.warning("Download bereits aktiv")
-            return
+        self.logger.debug("Whisper worker initialized")
+    
+    @log_function_calls
+    def set_audio_metadata(self, audio_metadata: AudioMetadata) -> None:
+        """Audio-Metadaten für Transkription setzen"""
+        self.audio_metadata = audio_metadata
+        self._should_stop = False
+        
+        self.logger.info(
+            "Audio metadata set",
+            audio_file=str(audio_metadata.file_path),
+            file_size=audio_metadata.file_size,
+            format=audio_metadata.format,
+        )
+    
+    def stop_transcription(self) -> None:
+        """Transkription abbrechen"""
+        self._should_stop = True
+        self.logger.info("Transcription stop requested")
+    
+    def run(self) -> None:
+        """Haupt-Transkriptionsprozess"""
+        try:
+            if not self.audio_metadata:
+                self.error_occurred.emit("❌ Keine Audio-Metadaten vorhanden")
+                return
             
-        if not self.video_metadata:
-            logger.error("Keine Video-Metadaten für nachträglichen Download")
-            return
+            self.logger.info(
+                "Whisper worker started",
+                audio_file=str(self.audio_metadata.file_path),
+                file_size=self.audio_metadata.file_size,
+            )
             
-        # Neuer Worker nur für Video
-        self._start_download(self.video_metadata.get('webpage_url', ''), download_audio=False, download_video=True)
-        
-    def _start_download(self, url: str, download_audio: bool, download_video: bool):
-        """Internen Download starten"""
-        # Vorherigen Worker stoppen
-        if self.current_worker and self.current_worker.isRunning():
-            self.current_worker.stop_download()
-            self.current_worker.wait(3000)  # 3 Sekunden warten
+            # 1. Audio-Datei validieren
+            audio_path = self.audio_metadata.file_path
             
-        # Neuen Worker erstellen
-        self.current_worker = DownloadWorker()
-        
-        # Signals verbinden
-        self.current_worker.video_info_ready.connect(self._on_video_info_ready)
-        self.current_worker.audio_ready.connect(self._on_audio_ready)
-        self.current_worker.video_ready.connect(self._on_video_ready)
-        self.current_worker.finished.connect(self._on_download_finished)
-        
-        # Download starten
-        self.current_worker.set_download_params(url, download_audio, download_video)
-        self.current_worker.start()
-        
-    def _on_video_info_ready(self, video_info: Dict[str, Any]):
-        """Video-Metadaten empfangen"""
-        self.video_metadata = video_info
-        logger.info(f"Video-Metadaten empfangen: {video_info['title']}")
-        
-    def _on_audio_ready(self, audio_file: Path):
-        """Audio-Datei empfangen (GEÄNDERT von BytesIO)"""
-        self.audio_file = audio_file
-        self.analysis_ready.emit(audio_file)
-        logger.info("Audio für Analyse bereit")
-        
-    def _on_video_ready(self, video_file: Path):
-        """Video-Datei empfangen"""
-        self.video_file = video_file
-        self.storage_ready.emit(video_file, self.video_metadata)
-        logger.info("Video für Storage bereit")
-        
-    def _on_download_finished(self):
-        """Download abgeschlossen"""
-        complete_data = {
-            'metadata': self.video_metadata,
-            'audio_file': self.audio_file,     # GEÄNDERT von audio_buffer
-            'video_file': self.video_file
-        }
-        self.download_completed.emit(complete_data)
-        logger.info("Download-Prozess vollständig abgeschlossen")
-        
-    def stop_current_download(self):
-        """Aktuellen Download stoppen"""
-        if self.current_worker and self.current_worker.isRunning():
-            self.current_worker.stop_download()
+            if not audio_path.exists():
+                self.error_occurred.emit("❌ Audio-Datei nicht gefunden")
+                return
             
-    def cleanup(self):
-        """Cleanup bei Beendigung"""
-        self.stop_current_download()
+            if audio_path.stat().st_size < 1000:
+                self.error_occurred.emit("❌ Audio-Datei zu klein")
+                return
+            
+            if self._should_stop:
+                return
+            
+            # 2. Model-Status prüfen
+            model_info = self.whisper_service.get_model_info()
+            
+            if not model_info['loaded']:
+                self.progress_updated.emit("🎤 Lade Whisper Large-v3 Model...")
+                self.model_loading.emit()
+            
+            # 3. Model-Info senden
+            self.model_ready.emit(model_info)
+            
+            if self._should_stop:
+                return
+            
+            # 4. Transkription starten
+            self.progress_updated.emit("🎤 Transkribiere Audio...")
+            self.transcription_started.emit()
+            
+            self.logger.info(
+                "Starting transcription",
+                audio_file=str(audio_path),
+                model_device=model_info.get('device', 'unknown'),
+            )
+            
+            # Transkription ausführen
+            transcription_result = self.whisper_service.transcribe_audio(self.audio_metadata)
+            
+            if isinstance(transcription_result, Err):
+                self.error_occurred.emit(f"❌ Transkription fehlgeschlagen: {transcription_result.error.message}")
+                return
+            
+            if self._should_stop:
+                return
+            
+            # 5. Transkription erfolgreich
+            transcription = transcription_result.value
+            
+            if len(transcription.text.strip()) < 10:
+                self.error_occurred.emit("❌ Transkription zu kurz - kein Sprachinhalt erkannt")
+                return
+            
+            self.progress_updated.emit("✅ Transkription abgeschlossen")
+            self.transcript_ready.emit(transcription)
+            
+            self.logger.info(
+                "Transcription completed successfully",
+                transcript_length=len(transcription.text),
+                detected_language=transcription.language,
+                confidence=transcription.confidence,
+                processing_time=transcription.processing_time,
+            )
         
-        # Audio-Datei löschen falls vorhanden
-        if self.audio_file and self.audio_file.exists():
+        except Exception as e:
+            error_msg = f"❌ Unerwarteter Whisper-Fehler: {str(e)}"
+            self.logger.error(
+                "Whisper worker failed with exception",
+                error=e,
+                audio_file=str(self.audio_metadata.file_path) if self.audio_metadata else "unknown",
+            )
+            self.error_occurred.emit(error_msg)
+        
+        finally:
+            # Audio-Datei nach Transkription löschen
+            if (
+                self.audio_metadata and 
+                self.audio_metadata.file_path.exists()
+            ):
+                try:
+                    self.audio_metadata.file_path.unlink()
+                    self.logger.debug(
+                        "Audio file deleted after transcription",
+                        audio_file=str(self.audio_metadata.file_path),
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to delete audio file",
+                        error=e,
+                        audio_file=str(self.audio_metadata.file_path),
+                    )
+            
+            # Model nach Transkription freigeben (optional)
             try:
-                self.audio_file.unlink()
-                logger.debug("Audio-Datei im Cleanup gelöscht")
+                self.whisper_service.cleanup()
+                self.logger.debug("Whisper model cleanup completed")
             except Exception as e:
-                logger.warning(f"Fehler beim Löschen der Audio-Datei: {e}")
+                self.logger.warning(
+                    "Whisper model cleanup failed",
+                    error=e,
+                )
             
-        # Download Service cleanup wird automatisch gemacht
+            self.finished.emit()
+            self.logger.info("Whisper worker finished")
+
+
+# =============================================================================
+# WORKER MANAGER (für zukünftige Erweiterungen)
+# =============================================================================
+
+class WorkerManager:
+    """Manager für Worker-Koordination und Cleanup"""
+    
+    def __init__(self) -> None:
+        self.logger = ComponentLogger("WorkerManager")
+        self.active_workers: list[QThread] = []
+    
+    def register_worker(self, worker: QThread) -> None:
+        """Worker registrieren für Cleanup"""
+        self.active_workers.append(worker)
+        
+        # Auto-cleanup wenn Worker fertig ist
+        worker.finished.connect(lambda: self.unregister_worker(worker))
+        
+        self.logger.debug(
+            "Worker registered",
+            worker_type=type(worker).__name__,
+            active_workers=len(self.active_workers),
+        )
+    
+    def unregister_worker(self, worker: QThread) -> None:
+        """Worker aus Registry entfernen"""
+        if worker in self.active_workers:
+            self.active_workers.remove(worker)
+            
+            self.logger.debug(
+                "Worker unregistered",
+                worker_type=type(worker).__name__,
+                active_workers=len(self.active_workers),
+            )
+    
+    def stop_all_workers(self, timeout: int = 5000) -> None:
+        """Alle aktiven Worker stoppen"""
+        for worker in self.active_workers.copy():
+            try:
+                # Worker-spezifische Stop-Methoden
+                if hasattr(worker, 'stop_download'):
+                    worker.stop_download()
+                elif hasattr(worker, 'stop_transcription'):
+                    worker.stop_transcription()
+                
+                # Auf Beendigung warten
+                if worker.isRunning():
+                    worker.wait(timeout)
+                
+                self.logger.info(
+                    "Worker stopped",
+                    worker_type=type(worker).__name__,
+                )
+            
+            except Exception as e:
+                self.logger.error(
+                    "Failed to stop worker",
+                    error=e,
+                    worker_type=type(worker).__name__,
+                )
+        
+        self.active_workers.clear()
+        self.logger.info("All workers stopped")
+    
+    def get_active_worker_count(self) -> int:
+        """Anzahl aktiver Worker"""
+        return len(self.active_workers)
+    
+    def get_worker_info(self) -> dict:
+        """Informationen über aktive Worker"""
+        return {
+            'total_workers': len(self.active_workers),
+            'worker_types': [type(w).__name__ for w in self.active_workers],
+            'running_workers': sum(1 for w in self.active_workers if w.isRunning()),
+        }
+
+
+# =============================================================================
+# FACTORY FUNCTIONS
+# =============================================================================
+
+def create_download_worker() -> DownloadWorker:
+    """Factory für Download-Worker"""
+    return DownloadWorker()
+
+
+def create_whisper_worker() -> WhisperWorker:
+    """Factory für Whisper-Worker"""
+    return WhisperWorker()
+
+
+def create_worker_manager() -> WorkerManager:
+    """Factory für Worker-Manager"""
+    return WorkerManager()
+
+
+# =============================================================================
+# TESTING UTILITIES
+# =============================================================================
+
+def test_download_worker() -> None:
+    """Test-Funktion für Download-Worker"""
+    from youtube_analyzer.utils.logging import get_development_config
+    from youtube_analyzer.utils.logging import setup_logging
+    
+    # Setup logging für Test
+    setup_logging(get_development_config())
+    
+    logger = ComponentLogger("DownloadWorkerTest")
+    logger.info("Starting download worker test")
+    
+    # Test-URL
+    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    
+    # Worker erstellen
+    worker = create_download_worker()
+    
+    # Test-Callbacks
+    def on_progress(progress: int, message: str) -> None:
+        logger.info(f"Progress: {progress}% - {message}")
+    
+    def on_video_info(video_info: VideoMetadata) -> None:
+        logger.info(f"Video Info: {video_info.title}")
+    
+    def on_audio_ready(audio_metadata: AudioMetadata) -> None:
+        logger.info(f"Audio Ready: {audio_metadata.file_path}")
+    
+    def on_error(error: str) -> None:
+        logger.error(f"Error: {error}")
+    
+    def on_finished() -> None:
+        logger.info("Worker finished")
+    
+    # Signals verbinden
+    worker.progress_updated.connect(on_progress)
+    worker.video_info_ready.connect(on_video_info)
+    worker.audio_ready.connect(on_audio_ready)
+    worker.error_occurred.connect(on_error)
+    worker.finished.connect(on_finished)
+    
+    # Parameter setzen und starten
+    worker.set_download_params(test_url, download_audio=True, download_video=False)
+    
+    logger.info("✅ Download worker test setup completed")
+    # Note: In echtem Test würde worker.start() aufgerufen und auf finished gewartet
+
+
+def test_whisper_worker() -> None:
+    """Test-Funktion für Whisper-Worker"""
+    from youtube_analyzer.utils.logging import get_development_config
+    from youtube_analyzer.utils.logging import setup_logging
+    
+    # Setup logging für Test
+    setup_logging(get_development_config())
+    
+    logger = ComponentLogger("WhisperWorkerTest")
+    logger.info("Starting whisper worker test")
+    
+    # Mock AudioMetadata
+    mock_audio = AudioMetadata(
+        file_path=Path("/tmp/test_audio.wav"),
+        file_size=1000000,
+        format="wav",
+        duration=60.0,
+        sample_rate=44100,
+        channels=1,
+    )
+    
+    # Worker erstellen
+    worker = create_whisper_worker()
+    
+    # Test-Callbacks
+    def on_progress(message: str) -> None:
+        logger.info(f"Progress: {message}")
+    
+    def on_model_ready(model_info: dict) -> None:
+        logger.info(f"Model Ready: {model_info}")
+    
+    def on_transcript(transcription: TranscriptionResult) -> None:
+        logger.info(f"Transcript: {len(transcription.text)} chars")
+    
+    def on_error(error: str) -> None:
+        logger.error(f"Error: {error}")
+    
+    def on_finished() -> None:
+        logger.info("Worker finished")
+    
+    # Signals verbinden
+    worker.progress_updated.connect(on_progress)
+    worker.model_ready.connect(on_model_ready)
+    worker.transcript_ready.connect(on_transcript)
+    worker.error_occurred.connect(on_error)
+    worker.finished.connect(on_finished)
+    
+    # Parameter setzen
+    worker.set_audio_metadata(mock_audio)
+    
+    logger.info("✅ Whisper worker test setup completed")
+    # Note: In echtem Test würde worker.start() aufgerufen und auf finished gewartet
+
+
+if __name__ == "__main__":
+    test_download_worker()
+    test_whisper_worker()

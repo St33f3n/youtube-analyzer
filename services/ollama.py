@@ -17,16 +17,16 @@ import requests
 from pydantic import BaseModel
 from pydantic import Field
 
-from youtube_analyzer.types import AnalysisError
-from youtube_analyzer.types import Err
-from youtube_analyzer.types import GPUInfo
-from youtube_analyzer.types import Ok
-from youtube_analyzer.types import Result
-from youtube_analyzer.types import ServiceStatus
-from youtube_analyzer.types import ServiceUnavailableError
-from youtube_analyzer.utils.logging import ComponentLogger
-from youtube_analyzer.utils.logging import log_function_calls
-from youtube_analyzer.utils.logging import log_performance
+from yt_types import AnalysisError
+from yt_types import Err
+from yt_types import GPUInfo
+from yt_types import Ok
+from yt_types import Result
+from yt_types import ServiceStatus
+from yt_types import ServiceUnavailableError
+from utils.logging import ComponentLogger
+from utils.logging import log_function_calls
+from utils.logging import log_performance
 
 
 class OllamaResponse(BaseModel):

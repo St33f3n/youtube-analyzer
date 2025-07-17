@@ -15,25 +15,25 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from youtube_analyzer.config.settings import get_config
-from youtube_analyzer.services.ollama import OllamaService
-from youtube_analyzer.services.ollama import get_ollama_service
-from youtube_analyzer.types import AnalysisDecision
-from youtube_analyzer.types import AnalysisError
-from youtube_analyzer.types import AnalysisResult
-from youtube_analyzer.types import AnalysisScore
-from youtube_analyzer.types import ConfigurationError
-from youtube_analyzer.types import Err
-from youtube_analyzer.types import Ok
-from youtube_analyzer.types import Result
-from youtube_analyzer.types import ServiceStatus
-from youtube_analyzer.types import TranscriptionResult
-from youtube_analyzer.types import ValidationError
-from youtube_analyzer.utils.logging import ComponentLogger
-from youtube_analyzer.utils.logging import FeatureLogger
-from youtube_analyzer.utils.logging import log_feature_execution
-from youtube_analyzer.utils.logging import log_function_calls
-from youtube_analyzer.utils.logging import log_performance
+from config.settings import get_config
+from services.ollama import OllamaService
+from services.ollama import get_ollama_service
+from yt_types import AnalysisDecision
+from yt_types  import AnalysisError
+from yt_types  import AnalysisResult
+from yt_types  import AnalysisScore
+from yt_types  import ConfigurationError
+from yt_types  import Err
+from yt_types  import Ok
+from yt_types  import Result
+from yt_types  import ServiceStatus
+from yt_types  import TranscriptionResult
+from yt_types  import ValidationError
+from utils.logging import ComponentLogger
+from utils.logging import FeatureLogger
+from utils.logging import log_feature_execution
+from utils.logging import log_function_calls
+from utils.logging import log_performance
 
 
 class RuleSchema(BaseModel):
