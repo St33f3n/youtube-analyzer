@@ -12,8 +12,8 @@ from PySide6.QtGui import QFont
 from pathlib import Path
 from typing import Dict, Any
 
+from config.settings import get_config, get_config_loader
 from ui.colors import get_main_stylesheet, get_status_colors
-from config.settings import get_config, config_loader
 from config.secrets import get_secrets_manager
 
 

@@ -1,0 +1,7 @@
+2025-07-17 19:37:40.931 | INFO     | YouTubeAnalyzerApp | : | YouTube Analyzer application initialized
+2025-07-17 19:37:40.931 | INFO     | YouTubeAnalyzerApp | : | Starting YouTube Analyzer application
+2025-07-17 19:37:40.931 | INFO     | YouTubeAnalyzerApp | : | Environment validation successful
+2025-07-17 19:37:40.934 | INFO     | ConfigLoader | : | Configuration loaded successfully
+2025-07-17 19:37:40.934 | INFO     | YouTubeAnalyzerApp | : | Configuration validation successful
+2025-07-17 19:37:40.948 | INFO     | YouTubeAnalyzerApp | : | Starting application cleanup
+2025-07-17 19:37:40.948 | INFO     | YouTubeAnalyzerApp | : | Application cleanup completed

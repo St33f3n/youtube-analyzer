@@ -11,15 +11,15 @@ from typing import Optional
 from PySide6.QtCore import QThread
 from PySide6.QtCore import Signal
 
-from youtube_analyzer.services.download import get_download_service
-from youtube_analyzer.services.whisper import get_whisper_service
-from youtube_analyzer.types import AudioMetadata
-from youtube_analyzer.types import Err
-from youtube_analyzer.types import Ok
-from youtube_analyzer.types import TranscriptionResult
-from youtube_analyzer.types import VideoMetadata
-from youtube_analyzer.utils.logging import ComponentLogger
-from youtube_analyzer.utils.logging import log_function_calls
+from services.download import get_download_service
+from services.whisper import get_whisper_service
+from yt_types import AudioMetadata
+from yt_types import Err
+from yt_types import Ok
+from yt_types import TranscriptionResult
+from yt_types import VideoMetadata
+from utils.logging import ComponentLogger
+from utils.logging import log_function_calls
 
 
 class DownloadWorker(QThread):
