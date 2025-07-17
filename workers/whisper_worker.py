@@ -30,7 +30,7 @@ class WhisperWorker(QThread):
     model_loading = Signal()                 # Model wird geladen
     model_ready = Signal(dict)               # Model-Info für UI
     transcription_started = Signal()         # Transkription gestartet
-    transcript_ready = Signal(str)           # Fertiges Transkript (string)
+    transcript_ready = Signal(TranscriptionResult)           # Fertiges Transkript (string)
     error_occurred = Signal(str)             # Fehler-Nachricht (string)
     finished = Signal()                      # Worker beendet
     
@@ -167,7 +167,6 @@ class WhisperWorker(QThread):
     @log_function_calls
     def _handle_transcription_success(self, transcription: TranscriptionResult) -> None:
         """Erfolgreiche Transkription verarbeiten"""
-        
         # Ergebnis validieren
         if not transcription.text or len(transcription.text.strip()) < 10:
             self._emit_error("Transcription too short - possibly no speech content")
@@ -186,7 +185,7 @@ class WhisperWorker(QThread):
         )
         
         # Transkript an UI senden (nur Text für Kompatibilität)
-        self.transcript_ready.emit(transcription.text)
+        self.transcript_ready.emit(transcription)
     
     @log_function_calls
     def _handle_transcription_error(self, error) -> None:

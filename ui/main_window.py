@@ -449,7 +449,6 @@ class MainWindow(QMainWindow):
     def on_transcript_ready(self, transcription: TranscriptionResult) -> None:
         """Transkript fertig - KI-Analyse starten"""
         self.current_transcription = transcription
-        
         self.add_status_message(
             f"✅ Transkription: {len(transcription.text)} Zeichen ({transcription.language})",
             "success"

@@ -47,7 +47,7 @@ class OllamaService:
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        model_name: str = "gemma2:2b",
+        model_name: str = "gemma3:12b",
         timeout: int = 120,
     ) -> None:
         self.base_url = base_url
@@ -740,7 +740,7 @@ def get_ollama_service() -> OllamaService:
 
 def create_ollama_service(
     base_url: str = "http://localhost:11434",
-    model_name: str = "gemma2:2b",
+    model_name: str = "gemma3:12b",
     timeout: int = 120,
 ) -> OllamaService:
     """Factory für neuen Ollama-Service mit spezifischen Parametern"""
