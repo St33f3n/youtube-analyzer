@@ -166,10 +166,7 @@ class YouTubeAnalyzerApp:
             self.app.setApplicationVersion("0.1.0")
             self.app.setOrganizationName("YouTube Analyzer")
             self.app.setOrganizationDomain("youtube-analyzer.local")
-            
-            # High DPI Support
-            self.app.setAttribute(self.app.AA_EnableHighDpiScaling, True)
-            self.app.setAttribute(self.app.AA_UseHighDpiPixmaps, True)
+
             
             self.logger.info(
                 "Qt application initialized",

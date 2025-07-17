@@ -1,7 +1,7 @@
 """
 Mehrstufiges Logging-System für YouTube Analyzer
 Feature-Level | Function-Level | Error-Level Logging mit strukturierten Daten
-KORREKTE REPARATUR - basierend auf bestehender Codebase
+GC-SAFE VERSION - Defensive Decorator-Implementierung für Garbage Collection
 """
 
 from __future__ import annotations
@@ -142,53 +142,69 @@ class ComponentLogger:
     
     def info(self, message: str, **context: Any) -> None:
         """Feature-Level INFO Logging"""
-        self.logger.info(
-            message,
-            extra={
-                "log_type": "feature",
-                "context": context,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
+        try:
+            self.logger.info(
+                message,
+                extra={
+                    "log_type": "feature",
+                    "context": context,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
     
     def debug(self, message: str, **context: Any) -> None:
         """Function-Level DEBUG Logging"""
-        self.logger.debug(
-            message,
-            extra={
-                "log_type": "function", 
-                "context": context,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
+        try:
+            self.logger.debug(
+                message,
+                extra={
+                    "log_type": "function", 
+                    "context": context,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
     
     def error(self, message: str, error: Optional[Exception] = None, **context: Any) -> None:
         """Error-Level ERROR Logging"""
-        error_context = {
-            "log_type": "error",
-            "context": context,
-            "timestamp": datetime.now().isoformat(),
-        }
-        
-        if error:
-            error_context.update({
-                "error_type": type(error).__name__,
-                "error_message": str(error),
-                "stack_trace": traceback.format_exc(),
-            })
-        
-        self.logger.error(message, extra=error_context)
-    
-    def warning(self, message: str, **context: Any) -> None:
-        """Warning-Level Logging"""
-        self.logger.warning(
-            message,
-            extra={
-                "log_type": "warning",
+        try:
+            error_context = {
+                "log_type": "error",
                 "context": context,
                 "timestamp": datetime.now().isoformat(),
             }
-        )
+            
+            if error:
+                error_context.update({
+                    "error_type": type(error).__name__,
+                    "error_message": str(error),
+                    "stack_trace": traceback.format_exc(),
+                })
+            
+            self.logger.error(message, extra=error_context)
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
+    
+    def warning(self, message: str, **context: Any) -> None:
+        """Warning-Level Logging"""
+        try:
+            self.logger.warning(
+                message,
+                extra={
+                    "log_type": "warning",
+                    "context": context,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
 
 
 class FeatureLogger:
@@ -202,53 +218,73 @@ class FeatureLogger:
     
     def started(self, **context: Any) -> None:
         """Feature-Start Logging"""
-        self.component_logger.info(
-            f"Feature '{self.feature_name}' started",
-            feature_name=self.feature_name,
-            feature_stage="started",
-            **context
-        )
+        try:
+            self.component_logger.info(
+                f"Feature '{self.feature_name}' started",
+                feature_name=self.feature_name,
+                feature_stage="started",
+                **context
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
     
     def progress(self, message: str, progress_percent: int, **context: Any) -> None:
         """Feature-Progress Logging"""
-        self.component_logger.info(
-            f"Feature '{self.feature_name}' progress: {message}",
-            feature_name=self.feature_name,
-            feature_stage="progress",
-            progress_percent=progress_percent,
-            **context
-        )
+        try:
+            self.component_logger.info(
+                f"Feature '{self.feature_name}' progress: {message}",
+                feature_name=self.feature_name,
+                feature_stage="progress",
+                progress_percent=progress_percent,
+                **context
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
     
     def completed(self, **context: Any) -> None:
         """Feature-Completion Logging"""
-        duration = time.time() - self.start_time
-        
-        self.component_logger.info(
-            f"Feature '{self.feature_name}' completed successfully",
-            feature_name=self.feature_name,
-            feature_stage="completed",
-            duration_seconds=duration,
-            metrics=self.metrics,
-            **context
-        )
+        try:
+            duration = time.time() - self.start_time
+            
+            self.component_logger.info(
+                f"Feature '{self.feature_name}' completed successfully",
+                feature_name=self.feature_name,
+                feature_stage="completed",
+                duration_seconds=duration,
+                metrics=self.metrics,
+                **context
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
     
     def failed(self, error: Exception, **context: Any) -> None:
         """Feature-Failure Logging"""
-        duration = time.time() - self.start_time
-        
-        self.component_logger.error(
-            f"Feature '{self.feature_name}' failed",
-            error=error,
-            feature_name=self.feature_name,
-            feature_stage="failed",
-            duration_seconds=duration,
-            metrics=self.metrics,
-            **context
-        )
+        try:
+            duration = time.time() - self.start_time
+            
+            self.component_logger.error(
+                f"Feature '{self.feature_name}' failed",
+                error=error,
+                feature_name=self.feature_name,
+                feature_stage="failed",
+                duration_seconds=duration,
+                metrics=self.metrics,
+                **context
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
     
     def add_metric(self, name: str, value: Any) -> None:
         """Add metrics to feature logging"""
-        self.metrics[name] = value
+        try:
+            self.metrics[name] = value
+        except Exception:
+            # GC-Safety: Ignore metric storage errors
+            pass
 
 
 class ProcessingLogger:
@@ -264,93 +300,113 @@ class ProcessingLogger:
     
     def stage_started(self, stage: ProcessingStage, **context: Any) -> None:
         """Processing-Stage-Start Logging"""
-        self.current_stage = stage
-        self.stage_start_time = time.time()
-        
-        self.component_logger.info(
-            f"Processing stage '{stage.value}' started",
-            process_id=self.process_id,
-            processing_stage=stage.value,
-            stage_status="started",
-            **context
-        )
+        try:
+            self.current_stage = stage
+            self.stage_start_time = time.time()
+            
+            self.component_logger.info(
+                f"Processing stage '{stage.value}' started",
+                process_id=self.process_id,
+                processing_stage=stage.value,
+                stage_status="started",
+                **context
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
     
     def stage_progress(self, message: str, progress_percent: int, **context: Any) -> None:
         """Processing-Stage-Progress Logging"""
-        if not self.current_stage:
-            return
-        
-        self.component_logger.info(
-            f"Processing stage '{self.current_stage.value}' progress: {message}",
-            process_id=self.process_id,
-            processing_stage=self.current_stage.value,
-            stage_status="progress",
-            progress_percent=progress_percent,
-            **context
-        )
+        try:
+            if not self.current_stage:
+                return
+            
+            self.component_logger.info(
+                f"Processing stage '{self.current_stage.value}' progress: {message}",
+                process_id=self.process_id,
+                processing_stage=self.current_stage.value,
+                stage_status="progress",
+                progress_percent=progress_percent,
+                **context
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
     
     def stage_completed(self, **context: Any) -> None:
         """Processing-Stage-Completion Logging"""
-        if not self.current_stage:
-            return
-        
-        duration = time.time() - self.stage_start_time
-        
-        # Store stage metrics
-        self.stage_metrics[self.current_stage] = {
-            "duration_seconds": duration,
-            "context": context,
-            "completed_at": datetime.now().isoformat(),
-        }
-        
-        self.component_logger.info(
-            f"Processing stage '{self.current_stage.value}' completed",
-            process_id=self.process_id,
-            processing_stage=self.current_stage.value,
-            stage_status="completed",
-            duration_seconds=duration,
-            **context
-        )
+        try:
+            if not self.current_stage:
+                return
+            
+            duration = time.time() - self.stage_start_time
+            
+            # Store stage metrics
+            self.stage_metrics[self.current_stage] = {
+                "duration_seconds": duration,
+                "context": context,
+                "completed_at": datetime.now().isoformat(),
+            }
+            
+            self.component_logger.info(
+                f"Processing stage '{self.current_stage.value}' completed",
+                process_id=self.process_id,
+                processing_stage=self.current_stage.value,
+                stage_status="completed",
+                duration_seconds=duration,
+                **context
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
     
     def stage_failed(self, error: Exception, **context: Any) -> None:
         """Processing-Stage-Failure Logging"""
-        if not self.current_stage:
-            return
-        
-        duration = time.time() - self.stage_start_time
-        
-        self.component_logger.error(
-            f"Processing stage '{self.current_stage.value}' failed",
-            error=error,
-            process_id=self.process_id,
-            processing_stage=self.current_stage.value,
-            stage_status="failed",
-            duration_seconds=duration,
-            **context
-        )
+        try:
+            if not self.current_stage:
+                return
+            
+            duration = time.time() - self.stage_start_time
+            
+            self.component_logger.error(
+                f"Processing stage '{self.current_stage.value}' failed",
+                error=error,
+                process_id=self.process_id,
+                processing_stage=self.current_stage.value,
+                stage_status="failed",
+                duration_seconds=duration,
+                **context
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
     
     def process_completed(self, **context: Any) -> None:
         """Complete Processing-Pipeline Logging"""
-        total_duration = time.time() - self.total_start_time
-        
-        self.component_logger.info(
-            f"Processing pipeline completed",
-            process_id=self.process_id,
-            processing_status="completed",
-            total_duration_seconds=total_duration,
-            stages_completed=len(self.stage_metrics),
-            stage_metrics=self.stage_metrics,
-            **context
-        )
+        try:
+            total_duration = time.time() - self.total_start_time
+            
+            self.component_logger.info(
+                f"Processing pipeline completed",
+                process_id=self.process_id,
+                processing_status="completed",
+                total_duration_seconds=total_duration,
+                stages_completed=len(self.stage_metrics),
+                stage_metrics=self.stage_metrics,
+                **context
+            )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
 
 
 # =============================================================================
-# DECORATORS
+# GC-SAFE DECORATORS
 # =============================================================================
 
 def log_performance(func: F) -> F:
     """
-    Decorator für automatisches Performance-Logging ohne Parameter
+    GC-Safe Decorator für automatisches Performance-Logging ohne Parameter
     """
     
     @wraps(func)
@@ -358,13 +414,20 @@ def log_performance(func: F) -> F:
         operation_name = func.__name__
         start_time = time.time()
         
-        # Logger Discovery: self.logger oder default
+        # GC-Safe Logger Discovery
         func_logger = None
-        if args and hasattr(args[0], 'logger'):
-            # Methode in Klasse mit self.logger
-            func_logger = args[0].logger
-        else:
-            # Fallback auf default ComponentLogger
+        try:
+            if (args and 
+                hasattr(args[0], 'logger') and 
+                args[0].logger is not None and
+                hasattr(args[0].logger, 'info')):
+                # Methode in Klasse mit self.logger
+                func_logger = args[0].logger
+            else:
+                # Fallback auf default ComponentLogger
+                func_logger = ComponentLogger("performance")
+        except Exception:
+            # GC-Safety: Erstelle immer einen Logger
             func_logger = ComponentLogger("performance")
         
         try:
@@ -372,27 +435,37 @@ def log_performance(func: F) -> F:
             result = func(*args, **kwargs)
             duration = time.time() - start_time
             
-            # Performance-Logging
-            func_logger.info(
-                f"Performance: {operation_name} completed",
-                operation_name=operation_name,
-                duration_seconds=round(duration, 4),
-                success=True,
-            )
+            # Performance-Logging (GC-Safe)
+            try:
+                if func_logger and hasattr(func_logger, 'info'):
+                    func_logger.info(
+                        f"Performance: {operation_name} completed",
+                        operation_name=operation_name,
+                        duration_seconds=round(duration, 4),
+                        success=True,
+                    )
+            except Exception:
+                # GC-Safety: Ignore logging errors
+                pass
             
             return result
         
         except Exception as e:
             duration = time.time() - start_time
             
-            # Error-Performance-Logging
-            func_logger.error(
-                f"Performance: {operation_name} failed",
-                error=e,
-                operation_name=operation_name,
-                duration_seconds=round(duration, 4),
-                success=False,
-            )
+            # Error-Performance-Logging (GC-Safe)
+            try:
+                if func_logger and hasattr(func_logger, 'error'):
+                    func_logger.error(
+                        f"Performance: {operation_name} failed",
+                        error=e,
+                        operation_name=operation_name,
+                        duration_seconds=round(duration, 4),
+                        success=False,
+                    )
+            except Exception:
+                # GC-Safety: Ignore logging errors
+                pass
             
             # Re-raise original exception
             raise
@@ -402,7 +475,7 @@ def log_performance(func: F) -> F:
 
 def log_function_calls(func: F) -> F:
     """
-    Decorator für function_calls (parameterlos)
+    GC-Safe Decorator für function_calls (parameterlos)
     Für DEBUG-Level Function-Entry/Exit Logging
     """
     
@@ -410,19 +483,35 @@ def log_function_calls(func: F) -> F:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         func_name = func.__name__
         
-        # Logger Discovery
+        # GC-Safe Logger Discovery
         func_logger = None
-        if args and hasattr(args[0], 'logger'):
-            func_logger = args[0].logger
-        else:
-            func_logger = ComponentLogger("function_calls")
+        try:
+            if (args and 
+                hasattr(args[0], 'logger') and 
+                args[0].logger is not None and
+                hasattr(args[0].logger, 'debug')):
+                func_logger = args[0].logger
+            else:
+                func_logger = ComponentLogger("function_calls")
+        except Exception:
+            # GC-Safety: Erstelle immer einen Fallback-Logger
+            try:
+                func_logger = ComponentLogger("function_calls")
+            except Exception:
+                # Extreme GC-Safety: Wenn auch das fehlschlägt, ignore logging
+                func_logger = None
         
-        # Function-Entry DEBUG Logging
-        func_logger.debug(
-            f"Function '{func_name}' called",
-            function_name=func_name,
-            args_count=len(args),
-        )
+        # Function-Entry DEBUG Logging (GC-Safe)
+        try:
+            if func_logger and hasattr(func_logger, 'debug'):
+                func_logger.debug(
+                    f"Function '{func_name}' called",
+                    function_name=func_name,
+                    args_count=len(args),
+                )
+        except Exception:
+            # GC-Safety: Ignore logging errors
+            pass
         
         start_time = time.time()
         
@@ -430,25 +519,35 @@ def log_function_calls(func: F) -> F:
             result = func(*args, **kwargs)
             duration = time.time() - start_time
             
-            # Function-Success DEBUG Logging
-            func_logger.debug(
-                f"Function '{func_name}' completed successfully",
-                function_name=func_name,
-                duration_seconds=round(duration, 4),
-            )
+            # Function-Success DEBUG Logging (GC-Safe)
+            try:
+                if func_logger and hasattr(func_logger, 'debug'):
+                    func_logger.debug(
+                        f"Function '{func_name}' completed successfully",
+                        function_name=func_name,
+                        duration_seconds=round(duration, 4),
+                    )
+            except Exception:
+                # GC-Safety: Ignore logging errors
+                pass
             
             return result
         
         except Exception as e:
             duration = time.time() - start_time
             
-            # Function-Error DEBUG Logging
-            func_logger.debug(
-                f"Function '{func_name}' failed",
-                function_name=func_name,
-                duration_seconds=round(duration, 4),
-                error_type=type(e).__name__,
-            )
+            # Function-Error DEBUG Logging (GC-Safe)
+            try:
+                if func_logger and hasattr(func_logger, 'debug'):
+                    func_logger.debug(
+                        f"Function '{func_name}' failed",
+                        function_name=func_name,
+                        duration_seconds=round(duration, 4),
+                        error_type=type(e).__name__,
+                    )
+            except Exception:
+                # GC-Safety: Ignore logging errors
+                pass
             
             raise
     

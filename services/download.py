@@ -2,6 +2,7 @@
 Download Service - yt-dlp Integration mit Result-Types und vollständigen Type-Hints
 Vollständig überarbeitet nach Quality-Gate-Standards
 REPARIERTE IMPORTS - Konsistente direkte Imports aus Hauptverzeichnis
+GC-SAFE VERSION - Defensive __del__ Implementierung
 """
 
 from __future__ import annotations
@@ -112,8 +113,26 @@ class DownloadService:
         )
     
     def __del__(self) -> None:
-        """Cleanup beim Beenden"""
-        self.cleanup()
+        """GC-Safe Cleanup beim Beenden"""
+        try:
+            # Defensive Prüfungen für GC-Safety
+            if hasattr(self, 'cleanup') and callable(self.cleanup):
+                # Cleanup ohne Decorator-Calls um Logger-Probleme zu vermeiden
+                self._safe_cleanup()
+        except Exception:
+            # Ignore alle Errors in __del__ - GC-Safety
+            pass
+    
+    def _safe_cleanup(self) -> None:
+        """Cleanup ohne Decorator-Abhängigkeiten für __del__"""
+        try:
+            # Temporäre Dateien aufräumen
+            if hasattr(self, 'temp_dir') and self.temp_dir and self.temp_dir.exists():
+                import shutil
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
+        except Exception:
+            # Vollständig defensiv - keine Exceptions in __del__
+            pass
     
     @log_function_calls
     def get_video_info(self, url: str) -> Result[VideoMetadata, DownloadError]:
@@ -412,7 +431,7 @@ class DownloadService:
     
     @log_function_calls
     def cleanup(self) -> None:
-        """Temporäre Dateien aufräumen"""
+        """Temporäre Dateien aufräumen - Public API Version"""
         try:
             if self.temp_dir.exists():
                 import shutil

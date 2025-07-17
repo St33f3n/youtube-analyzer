@@ -2,6 +2,7 @@
 Whisper Service - faster-whisper Integration mit Result-Types und vollständigen Type-Hints
 Vollständig überarbeitet nach Quality-Gate-Standards
 REPARIERTE IMPORTS - Konsistente direkte Imports
+GC-SAFE VERSION - Defensive __del__ Implementierung
 """
 
 from __future__ import annotations
@@ -51,8 +52,34 @@ class WhisperService:
         )
     
     def __del__(self) -> None:
-        """Cleanup beim Beenden"""
-        self.cleanup()
+        """GC-Safe Cleanup beim Beenden"""
+        try:
+            # Defensive Prüfungen für GC-Safety
+            if hasattr(self, 'cleanup') and callable(self.cleanup):
+                # Cleanup ohne Decorator-Calls um Logger-Probleme zu vermeiden
+                self._safe_cleanup()
+        except Exception:
+            # Ignore alle Errors in __del__ - GC-Safety
+            pass
+    
+    def _safe_cleanup(self) -> None:
+        """Cleanup ohne Decorator-Abhängigkeiten für __del__"""
+        try:
+            # Model freigeben
+            if hasattr(self, '_model') and self._model is not None:
+                if hasattr(self, '_device') and self._device == "cuda":
+                    torch.cuda.empty_cache()
+                
+                self._model = None
+                self._model_loaded = False
+            
+            # Temporäre Dateien aufräumen
+            if hasattr(self, '_temp_dir') and self._temp_dir and self._temp_dir.exists():
+                import shutil
+                shutil.rmtree(self._temp_dir, ignore_errors=True)
+        except Exception:
+            # Vollständig defensiv - keine Exceptions in __del__
+            pass
     
     @log_function_calls
     def _detect_device(self) -> str:
@@ -60,25 +87,29 @@ class WhisperService:
         try:
             if torch.cuda.is_available():
                 device_name = torch.cuda.get_device_name(0)
-                self.logger.info(
-                    "CUDA GPU detected",
-                    gpu_name=device_name,
-                    cuda_version=torch.version.cuda,
-                )
+                # Logger existiert hier noch nicht - defensiv prüfen
+                if hasattr(self, 'logger') and self.logger:
+                    self.logger.info(
+                        "CUDA GPU detected",
+                        gpu_name=device_name,
+                        cuda_version=torch.version.cuda,
+                    )
                 return "cuda"
             else:
-                self.logger.warning(
-                    "CUDA not available, falling back to CPU",
-                    torch_version=torch.__version__,
-                )
+                if hasattr(self, 'logger') and self.logger:
+                    self.logger.warning(
+                        "CUDA not available, falling back to CPU",
+                        torch_version=torch.__version__,
+                    )
                 return "cpu"
         
         except Exception as e:
-            self.logger.error(
-                "Device detection failed",
-                error=e,
-                fallback_device="cpu",
-            )
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.error(
+                    "Device detection failed",
+                    error=e,
+                    fallback_device="cpu",
+                )
             return "cpu"
     
     @log_function_calls
@@ -317,7 +348,7 @@ class WhisperService:
     
     @log_function_calls
     def cleanup(self) -> None:
-        """Model und temporäre Dateien aufräumen"""
+        """Model und temporäre Dateien aufräumen - Public API Version"""
         try:
             # Model freigeben
             if self._model is not None:

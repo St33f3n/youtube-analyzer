@@ -5,3 +5,90 @@
 2025-07-17 19:37:40.934 | INFO     | YouTubeAnalyzerApp | : | Configuration validation successful
 2025-07-17 19:37:40.948 | INFO     | YouTubeAnalyzerApp | : | Starting application cleanup
 2025-07-17 19:37:40.948 | INFO     | YouTubeAnalyzerApp | : | Application cleanup completed
+2025-07-17 19:40:48.101 | INFO     | YouTubeAnalyzerApp | : | YouTube Analyzer application initialized
+2025-07-17 19:40:48.101 | INFO     | YouTubeAnalyzerApp | : | Starting YouTube Analyzer application
+2025-07-17 19:40:48.102 | INFO     | YouTubeAnalyzerApp | : | Environment validation successful
+2025-07-17 19:40:48.104 | INFO     | ConfigLoader | : | Configuration loaded successfully
+2025-07-17 19:40:48.105 | INFO     | YouTubeAnalyzerApp | : | Configuration validation successful
+2025-07-17 19:40:48.109 | INFO     | YouTubeAnalyzerApp | : | Qt application initialized
+2025-07-17 19:40:48.110 | INFO     | DownloadService | : | Download service initialized
+2025-07-17 19:40:48.282 | INFO     | YouTubeAnalyzerApp | : | Starting application cleanup
+2025-07-17 19:40:48.282 | INFO     | YouTubeAnalyzerApp | : | Application cleanup completed
+2025-07-17 19:48:23.583 | INFO     | YouTubeAnalyzerApp | : | YouTube Analyzer application initialized
+2025-07-17 19:48:23.583 | INFO     | YouTubeAnalyzerApp | : | Starting YouTube Analyzer application
+2025-07-17 19:48:23.583 | INFO     | YouTubeAnalyzerApp | : | Environment validation successful
+2025-07-17 19:48:23.585 | INFO     | ConfigLoader | : | Configuration loaded successfully
+2025-07-17 19:48:23.585 | INFO     | YouTubeAnalyzerApp | : | Configuration validation successful
+2025-07-17 19:48:23.590 | INFO     | YouTubeAnalyzerApp | : | Qt application initialized
+2025-07-17 19:48:23.590 | INFO     | DownloadService | : | Download service initialized
+2025-07-17 19:48:23.732 | INFO     | WhisperService | : | Whisper service initialized
+2025-07-17 19:48:23.732 | INFO     | OllamaService | : | Ollama service initialized
+2025-07-17 19:48:23.743 | ERROR    | OllamaService | : | Ollama server check failed
+2025-07-17 19:48:23.790 | INFO     | OllamaService | : | ROCm GPU detected
+2025-07-17 19:48:23.790 | INFO     | AnalysisService | : | Analysis rules loaded
+2025-07-17 19:48:23.859 | INFO     | SecretsManager | : | Secrets manager initialized
+2025-07-17 19:48:23.917 | INFO     | MainWindow | : | UI Status: 🌊 YouTube Analyzer bereit
+2025-07-17 19:48:23.920 | ERROR    | OllamaService | : | Ollama server check failed
+2025-07-17 19:48:23.920 | INFO     | MainWindow | : | Main window initialized
+2025-07-17 19:48:23.920 | INFO     | YouTubeAnalyzerApp | : | Main window initialized
+2025-07-17 19:48:23.956 | INFO     | YouTubeAnalyzerApp | : | Application started successfully
+2025-07-17 19:48:44.844 | INFO     | MainWindow | : | UI Status: 🔧 Prüfe Service-Status...
+2025-07-17 19:48:44.844 | INFO     | MainWindow | : | UI Status: 📥 Download: ready
+2025-07-17 19:48:44.845 | INFO     | MainWindow | : | UI Status: 🎤 Whisper: loading - Model large-v3 not loaded
+2025-07-17 19:48:44.848 | ERROR    | OllamaService | : | Ollama server check failed
+2025-07-17 19:48:44.848 | INFO     | MainWindow | : | UI Status: 🤖 Ollama: unavailable - Ollama server not reachable: HTTPConnectionPool(host='localhost', port=11434): Max retries exceeded with url: /api/version (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f6756930f10>: Failed to establish a new connection: [Errno 111] Verbindungsaufbau abgelehnt'))
+2025-07-17 19:48:44.850 | ERROR    | OllamaService | : | Ollama server check failed
+2025-07-17 19:48:44.850 | INFO     | MainWindow | : | UI Status: 📊 Analysis: error - Ollama service not ready
+2025-07-17 19:48:59.396 | INFO     | SecretsManager | : | Trilium API key retrieved successfully
+2025-07-17 19:48:59.408 | INFO     | SecretsManager | : | NextCloud credentials retrieved successfully
+2025-07-17 19:48:59.408 | INFO     | SecretsManager | : | Secrets availability check completed
+2025-07-17 19:48:59.409 | INFO     | MainWindow | : | UI Status: 🔐 Secret-Status:
+2025-07-17 19:48:59.409 | INFO     | MainWindow | : | UI Status:   ✅ trilium_api_key
+2025-07-17 19:48:59.412 | INFO     | MainWindow | : | UI Status:   ✅ nextcloud_credentials
+2025-07-17 19:49:33.387 | INFO     | ConfigLoader | : | Reloading configuration
+2025-07-17 19:49:33.390 | INFO     | ConfigLoader | : | Configuration loaded successfully
+2025-07-17 19:49:34.187 | INFO     | ConfigLoader | : | Reloading configuration
+2025-07-17 19:49:34.190 | INFO     | ConfigLoader | : | Configuration loaded successfully
+2025-07-17 19:49:43.568 | INFO     | MainWindow | : | UI Status: 🔧 Konfiguration angezeigt
+2025-07-17 19:49:47.292 | INFO     | MainWindow | : | UI Status: 🔄 Analyse zurückgesetzt
+2025-07-17 19:51:17.890 | INFO     | MainWindow | : | UI Status: 🔧 Konfiguration angezeigt
+2025-07-17 19:51:21.338 | INFO     | MainWindow | : | Main window cleanup started
+2025-07-17 19:51:21.343 | INFO     | DownloadService | : | Cleanup completed
+2025-07-17 19:51:21.343 | INFO     | WhisperService | : | Temporary files cleanup completed
+2025-07-17 19:51:21.344 | INFO     | MainWindow | : | Main window cleanup completed
+2025-07-17 19:51:21.344 | INFO     | YouTubeAnalyzerApp | : | Application exited
+2025-07-17 19:51:21.344 | INFO     | YouTubeAnalyzerApp | : | Starting application cleanup
+2025-07-17 19:51:21.344 | INFO     | MainWindow | : | Main window cleanup started
+2025-07-17 19:51:21.344 | INFO     | MainWindow | : | Main window cleanup completed
+2025-07-17 19:51:21.344 | INFO     | YouTubeAnalyzerApp | : | Application cleanup completed
+2025-07-17 19:53:05.205 | INFO     | YouTubeAnalyzerApp | : | YouTube Analyzer application initialized
+2025-07-17 19:53:05.205 | INFO     | YouTubeAnalyzerApp | : | Starting YouTube Analyzer application
+2025-07-17 19:53:05.205 | INFO     | YouTubeAnalyzerApp | : | Environment validation successful
+2025-07-17 19:53:05.208 | INFO     | ConfigLoader | : | Configuration loaded successfully
+2025-07-17 19:53:05.208 | INFO     | YouTubeAnalyzerApp | : | Configuration validation successful
+2025-07-17 19:53:05.212 | INFO     | YouTubeAnalyzerApp | : | Qt application initialized
+2025-07-17 19:53:05.213 | INFO     | DownloadService | : | Download service initialized
+2025-07-17 19:53:05.365 | INFO     | WhisperService | : | Whisper service initialized
+2025-07-17 19:53:05.366 | INFO     | OllamaService | : | Ollama service initialized
+2025-07-17 19:53:05.370 | ERROR    | OllamaService | : | Ollama server check failed
+2025-07-17 19:53:05.414 | INFO     | OllamaService | : | ROCm GPU detected
+2025-07-17 19:53:05.414 | INFO     | AnalysisService | : | Analysis rules loaded
+2025-07-17 19:53:05.467 | INFO     | SecretsManager | : | Secrets manager initialized
+2025-07-17 19:53:05.520 | INFO     | MainWindow | : | UI Status: 🌊 YouTube Analyzer bereit
+2025-07-17 19:53:05.523 | ERROR    | OllamaService | : | Ollama server check failed
+2025-07-17 19:53:05.523 | INFO     | MainWindow | : | Main window initialized
+2025-07-17 19:53:05.523 | INFO     | YouTubeAnalyzerApp | : | Main window initialized
+2025-07-17 19:53:05.567 | INFO     | YouTubeAnalyzerApp | : | Application started successfully
+2025-07-17 19:53:09.083 | INFO     | SecretsManager | : | Trilium API key retrieved successfully
+2025-07-17 19:53:09.094 | INFO     | SecretsManager | : | NextCloud credentials retrieved successfully
+2025-07-17 19:53:09.094 | INFO     | SecretsManager | : | Secrets availability check completed
+2025-07-17 19:53:31.173 | INFO     | MainWindow | : | UI Status: 🔧 Konfiguration angezeigt
+2025-07-17 19:53:38.966 | INFO     | MainWindow | : | Main window cleanup started
+2025-07-17 19:53:38.967 | INFO     | DownloadService | : | Cleanup completed
+2025-07-17 19:53:38.967 | INFO     | WhisperService | : | Temporary files cleanup completed
+2025-07-17 19:53:38.967 | INFO     | MainWindow | : | Main window cleanup completed
+2025-07-17 19:53:38.967 | INFO     | YouTubeAnalyzerApp | : | Application exited
+2025-07-17 19:53:38.967 | INFO     | YouTubeAnalyzerApp | : | Starting application cleanup
+2025-07-17 19:53:38.967 | INFO     | MainWindow | : | Main window cleanup started
+2025-07-17 19:53:38.967 | INFO     | MainWindow | : | Main window cleanup completed
+2025-07-17 19:53:38.968 | INFO     | YouTubeAnalyzerApp | : | Application cleanup completed

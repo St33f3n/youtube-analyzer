@@ -1,5 +1,6 @@
 """
 Config Dialog - Regel-Übersicht und Einstellungen anzeigen
+KORRIGIERTE VERSION - Korrekte Imports und Variable-Referenzen
 """
 
 from PySide6.QtWidgets import (
@@ -12,7 +13,8 @@ from PySide6.QtGui import QFont
 from pathlib import Path
 from typing import Dict, Any
 
-from config.settings import get_config, get_config_loader
+# KORRIGIERTE IMPORTS
+from config.settings import get_config, get_config_loader, reload_config
 from ui.colors import get_main_stylesheet, get_status_colors
 from config.secrets import get_secrets_manager
 
@@ -23,6 +25,7 @@ class ConfigDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config = None
+        self.config_loader = get_config_loader()  # Config-Loader richtig initialisieren
         self.secrets_manager = get_secrets_manager()
         self.status_colors = get_status_colors()
         
@@ -211,7 +214,7 @@ class ConfigDialog(QDialog):
     def load_config_data(self):
         """Lade und zeige Konfigurationsdaten"""
         try:
-            # Config laden
+            # Config laden mit korrekte get_config() Aufruf
             self.config = get_config()
             
             # Rules Table füllen
@@ -232,107 +235,141 @@ class ConfigDialog(QDialog):
             self.status_label.setText(f"✅ {total_rules} Regeln geladen ({active_rules} aktiv)")
             
         except Exception as e:
-            self.status_label.setText(f"❌ Fehler: {str(e)}")
+            self.status_label.setText(f"❌ Config-Fehler: {str(e)}")
+            
+            # Debug-Information anzeigen
+            error_details = f"Config-Loading Fehler:\n{str(e)}\n\nType: {type(e).__name__}"
+            
+            # Fallback-Anzeige
+            self.threshold_label.setText("📊 Threshold: Fehler beim Laden")
+            self.confidence_label.setText("🎯 Min. Confidence: Fehler beim Laden")
+            self.weight_label.setText("⚖️ Gesamt-Gewichtung: Fehler beim Laden")
+            
+            print(f"Config Dialog Error: {error_details}")  # Debug-Output
             
     def populate_rules_table(self):
         """Rules Table mit Daten füllen"""
         if not self.config:
             return
             
-        rules = self.config.rules
-        self.rules_table.setRowCount(len(rules))
-        
-        for row, (name, rule) in enumerate(rules.items()):
-            # Status (Aktiv/Inaktiv)
-            status_icon = "🟢" if rule.enabled else "🔴"
-            status_item = QTableWidgetItem(status_icon)
-            status_item.setTextAlignment(Qt.AlignCenter)
-            self.rules_table.setItem(row, 0, status_item)
+        try:
+            rules = self.config.rules
+            self.rules_table.setRowCount(len(rules))
             
-            # Name
-            name_item = QTableWidgetItem(name)
-            name_item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-            self.rules_table.setItem(row, 1, name_item)
-            
-            # Prompt-Datei
-            file_item = QTableWidgetItem(rule.file)
-            self.rules_table.setItem(row, 2, file_item)
-            
-            # Gewichtung
-            weight_item = QTableWidgetItem(f"{rule.weight:.2f}")
-            weight_item.setTextAlignment(Qt.AlignCenter)
-            self.rules_table.setItem(row, 3, weight_item)
-            
-            # Verfügbarkeit
-            file_exists = Path(rule.file).exists()
-            available_icon = "✅" if file_exists else "❌"
-            available_item = QTableWidgetItem(available_icon)
-            available_item.setTextAlignment(Qt.AlignCenter)
-            self.rules_table.setItem(row, 4, available_item)
+            for row, (name, rule) in enumerate(rules.items()):
+                # Status (Aktiv/Inaktiv)
+                status_icon = "🟢" if rule.enabled else "🔴"
+                status_item = QTableWidgetItem(status_icon)
+                status_item.setTextAlignment(Qt.AlignCenter)
+                self.rules_table.setItem(row, 0, status_item)
+                
+                # Name
+                name_item = QTableWidgetItem(name)
+                name_item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+                self.rules_table.setItem(row, 1, name_item)
+                
+                # Prompt-Datei
+                file_item = QTableWidgetItem(rule.file)
+                self.rules_table.setItem(row, 2, file_item)
+                
+                # Gewichtung
+                weight_item = QTableWidgetItem(f"{rule.weight:.2f}")
+                weight_item.setTextAlignment(Qt.AlignCenter)
+                self.rules_table.setItem(row, 3, weight_item)
+                
+                # Verfügbarkeit
+                file_exists = Path(rule.file).exists()
+                available_icon = "✅" if file_exists else "❌"
+                available_item = QTableWidgetItem(available_icon)
+                available_item.setTextAlignment(Qt.AlignCenter)
+                self.rules_table.setItem(row, 4, available_item)
+                
+        except Exception as e:
+            print(f"Rules table population error: {e}")
             
     def update_scoring_info(self):
         """Scoring-Informationen aktualisieren"""
         if not self.config:
             return
             
-        threshold = self.config.scoring.threshold
-        confidence = self.config.scoring.min_confidence
-        total_weight = config_loader.get_total_weight()
-        
-        self.threshold_label.setText(f"📊 Threshold: {threshold:.2f}")
-        self.confidence_label.setText(f"🎯 Min. Confidence: {confidence:.2f}")
-        
-        # Gewichtung mit Farbe
-        weight_color = self.status_colors['success'] if abs(total_weight - 1.0) < 0.01 else self.status_colors['warning']
-        self.weight_label.setText(f'<span style="color: {weight_color};">⚖️ Gesamt-Gewichtung: {total_weight:.3f}</span>')
+        try:
+            threshold = self.config.scoring.threshold
+            confidence = self.config.scoring.min_confidence
+            
+            # KORRIGIERT: Verwende self.config statt undefined config_loader
+            total_weight = self.config.get_total_weight()
+            
+            self.threshold_label.setText(f"📊 Threshold: {threshold:.2f}")
+            self.confidence_label.setText(f"🎯 Min. Confidence: {confidence:.2f}")
+            
+            # Gewichtung mit Farbe
+            weight_color = self.status_colors['success'] if abs(total_weight - 1.0) < 0.01 else self.status_colors['warning']
+            self.weight_label.setText(f'<span style="color: {weight_color};">⚖️ Gesamt-Gewichtung: {total_weight:.3f}</span>')
+            
+        except Exception as e:
+            print(f"Scoring info update error: {e}")
+            self.threshold_label.setText("📊 Threshold: Fehler")
+            self.confidence_label.setText("🎯 Min. Confidence: Fehler")
+            self.weight_label.setText("⚖️ Gesamt-Gewichtung: Fehler")
         
     def update_secrets_status(self):
         """Secrets-Status aktualisieren"""
-        status = self.secrets_manager.check_secrets_availability()
-        
         try:
-            config = self.config
-            trilium_user = config.secrets.trilium_username
-            nextcloud_user = config.secrets.nextcloud_username
+            status = self.secrets_manager.check_secrets_availability()
             
-            # Trilium
-            trilium_icon = "✅" if status.get('trilium_api_key', False) else "❌"
-            trilium_text = f"Verfügbar ({trilium_user})" if status.get('trilium_api_key', False) else f"Nicht verfügbar ({trilium_user})"
-            self.trilium_status_label.setText(f"📝 Trilium API: {trilium_icon} {trilium_text}")
-            
-            # NextCloud
-            nextcloud_icon = "✅" if status.get('nextcloud_credentials', False) else "❌"
-            nextcloud_text = f"Verfügbar ({nextcloud_user})" if status.get('nextcloud_credentials', False) else f"Nicht verfügbar ({nextcloud_user})"
-            self.nextcloud_status_label.setText(f"☁️ NextCloud: {nextcloud_icon} {nextcloud_text}")
-            
+            # Config für Usernames verwenden
+            if self.config:
+                trilium_user = self.config.secrets.trilium_username
+                nextcloud_user = self.config.secrets.nextcloud_username
+                
+                # Trilium
+                trilium_icon = "✅" if status.get('trilium_api_key', False) else "❌"
+                trilium_text = f"Verfügbar ({trilium_user})" if status.get('trilium_api_key', False) else f"Nicht verfügbar ({trilium_user})"
+                self.trilium_status_label.setText(f"📝 Trilium API: {trilium_icon} {trilium_text}")
+                
+                # NextCloud
+                nextcloud_icon = "✅" if status.get('nextcloud_credentials', False) else "❌"
+                nextcloud_text = f"Verfügbar ({nextcloud_user})" if status.get('nextcloud_credentials', False) else f"Nicht verfügbar ({nextcloud_user})"
+                self.nextcloud_status_label.setText(f"☁️ NextCloud: {nextcloud_icon} {nextcloud_text}")
+            else:
+                # Fallback ohne Usernames
+                trilium_icon = "✅" if status.get('trilium_api_key', False) else "❌"
+                trilium_text = "Verfügbar" if status.get('trilium_api_key', False) else "Nicht verfügbar"
+                self.trilium_status_label.setText(f"📝 Trilium API: {trilium_icon} {trilium_text}")
+                
+                nextcloud_icon = "✅" if status.get('nextcloud_credentials', False) else "❌"
+                nextcloud_text = "Verfügbar" if status.get('nextcloud_credentials', False) else "Nicht verfügbar"
+                self.nextcloud_status_label.setText(f"☁️ NextCloud: {nextcloud_icon} {nextcloud_text}")
+                
         except Exception as e:
-            # Fallback ohne Usernames
-            trilium_icon = "✅" if status.get('trilium_api_key', False) else "❌"
-            trilium_text = "Verfügbar" if status.get('trilium_api_key', False) else "Nicht verfügbar"
-            self.trilium_status_label.setText(f"📝 Trilium API: {trilium_icon} {trilium_text}")
-            
-            nextcloud_icon = "✅" if status.get('nextcloud_credentials', False) else "❌"
-            nextcloud_text = "Verfügbar" if status.get('nextcloud_credentials', False) else "Nicht verfügbar"
-            self.nextcloud_status_label.setText(f"☁️ NextCloud: {nextcloud_icon} {nextcloud_text}")
+            print(f"Secrets status update error: {e}")
+            self.trilium_status_label.setText("📝 Trilium API: ❌ Fehler beim Prüfen")
+            self.nextcloud_status_label.setText("☁️ NextCloud: ❌ Fehler beim Prüfen")
         
     def update_storage_info(self):
         """Storage-Informationen aktualisieren"""
         if not self.config:
             return
             
-        storage = self.config.storage
-        
-        self.nextcloud_path_label.setText(f"☁️ NextCloud Pfad: {storage.nextcloud_path}")
-        self.trilium_note_label.setText(f"📝 Trilium Parent: {storage.trilium_parent_note}")
-        self.sqlite_path_label.setText(f"🗄️ SQLite DB: {storage.sqlite_path}")
+        try:
+            storage = self.config.storage
+            
+            self.nextcloud_path_label.setText(f"☁️ NextCloud Pfad: {storage.nextcloud_path}")
+            self.trilium_note_label.setText(f"📝 Trilium Parent: {storage.trilium_parent_note}")
+            self.sqlite_path_label.setText(f"🗄️ SQLite DB: {storage.sqlite_path}")
+            
+        except Exception as e:
+            print(f"Storage info update error: {e}")
+            self.nextcloud_path_label.setText("☁️ NextCloud Pfad: Fehler beim Laden")
+            self.trilium_note_label.setText("📝 Trilium Parent: Fehler beim Laden")
+            self.sqlite_path_label.setText("🗄️ SQLite DB: Fehler beim Laden")
         
     def reload_config(self):
         """Konfiguration neu laden"""
         try:
             self.status_label.setText("🔄 Lade Konfiguration neu...")
             
-            # Config neu laden
-            from config.settings import reload_config
+            # Config neu laden mit korrektem reload_config Aufruf
             reload_config()
             
             # UI aktualisieren
@@ -340,3 +377,4 @@ class ConfigDialog(QDialog):
             
         except Exception as e:
             self.status_label.setText(f"❌ Reload-Fehler: {str(e)}")
+            print(f"Config reload error: {e}")
