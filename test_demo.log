@@ -1,0 +1,32 @@
+2025-07-18 00:52:53.217 | INFO     | test_runner | Test suite started
+2025-07-18 00:52:53.318 | ERROR    | test_runner | 🚨 Critical error in test_execution
+2025-07-18 00:54:32.940 | INFO     | test_runner | Test suite started
+2025-07-18 00:54:33.041 | ERROR    | test_runner | 🚨 Critical error in test_execution
+2025-07-18 00:55:44.617 | INFO     | test_runner | Test suite started
+2025-07-18 00:55:44.617 | INFO     | user_data_processing | ▶ Feature 'user_data_processing' started
+2025-07-18 00:55:44.617 | DEBUG    | user_data_processing | 📍 user_data_processing checkpoint: validation_start
+2025-07-18 00:55:44.617 | DEBUG    | __main__ | → example_processing_function() called
+2025-07-18 00:55:44.668 | DEBUG    | __main__ | ✓ example_processing_function() completed
+2025-07-18 00:55:44.668 | DEBUG    | user_data_processing | 📍 user_data_processing checkpoint: score_validation
+2025-07-18 00:55:44.668 | INFO     | __main__ | ✓ score_validation succeeded
+2025-07-18 00:55:44.668 | DEBUG    | user_data_processing | 📍 user_data_processing checkpoint: completion
+2025-07-18 00:55:44.668 | INFO     | user_data_processing | ✓ Feature 'user_data_processing' completed
+2025-07-18 00:55:44.769 | ERROR    | result_logger | ✗ negative_score_test failed
+2025-07-18 00:55:44.870 | ERROR    | result_logger | ✗ file_access_test failed
+2025-07-18 00:55:44.971 | ERROR    | critical_error | 🚨 Critical error in simulation_test
+2025-07-18 00:55:44.971 | INFO     | performance_test | ▶ Feature 'performance_test' started
+2025-07-18 00:55:44.971 | DEBUG    | performance_test | 📍 performance_test checkpoint: fast_op_start
+2025-07-18 00:55:44.971 | DEBUG    | __main__ | → fast_operation() called
+2025-07-18 00:55:44.972 | DEBUG    | __main__ | ✓ fast_operation() completed
+2025-07-18 00:55:44.972 | DEBUG    | performance_test | 📍 performance_test checkpoint: slow_op_start
+2025-07-18 00:55:44.972 | DEBUG    | __main__ | → slow_operation() called
+2025-07-18 00:55:45.473 | DEBUG    | __main__ | ✓ slow_operation() completed
+2025-07-18 00:55:45.473 | INFO     | performance_test | ✓ Feature 'performance_test' completed
+2025-07-18 00:55:45.473 | INFO     | application_startup | ▶ Feature 'application_startup' started
+2025-07-18 00:55:45.473 | DEBUG    | application_startup | 📍 application_startup checkpoint: config_loading
+2025-07-18 00:55:45.473 | INFO     | __main__ | ✓ file_processing succeeded
+2025-07-18 00:55:45.473 | DEBUG    | application_startup | 📍 application_startup checkpoint: score_validation
+2025-07-18 00:55:45.473 | INFO     | __main__ | ✓ score_validation succeeded
+2025-07-18 00:55:45.474 | DEBUG    | application_startup | 📍 application_startup checkpoint: startup_complete
+2025-07-18 00:55:45.474 | INFO     | application_startup | ✓ Feature 'application_startup' completed
+2025-07-18 00:55:45.474 | INFO     | test_runner | ✅ All tests completed successfully

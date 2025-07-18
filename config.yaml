@@ -1,45 +1,47 @@
-# YouTube Info Analyzer - Konfiguration
-# Ocean Theme Config für persönliches Wissensmanagement
-
-# Secret Service Konfiguration (KeePassXC via D-Bus)
-secrets:
-  trilium_service: "TrilliumToken"
-  trilium_username: "token"
-  nextcloud_service: "NextcloudPW"
-  nextcloud_username: "steefen"
-
-whisper:
-  enabled: true  
-
-# Analyse-Regeln mit Prompt-Dateien
+ollama:
+  host: http://localhost:11434
+  max_tokens: 4000
+  model: gemma3
+  temperature: 0.1
+  timeout: 300
+processing:
+  audio_format: mp3
+  cleanup_temp_files: true
+  max_video_length: 7200
+  temp_folder: /tmp/youtube_analyzer
+  video_format: mp4
 rules:
   fachinhalt:
-    file: "prompts/fachinhalt.md"
+    enabled: true
+    file: prompts/fachinhalt.md
     weight: 0.35
-    enabled: true
-    
-  qualität:
-    file: "prompts/qualität.md" 
-    weight: 0.25
-    enabled: true
-    
   länge_tiefe:
-    file: "prompts/länge_tiefe.md"
-    weight: 0.20
     enabled: true
-    
+    file: prompts/länge_tiefe.md
+    weight: 0.2
+  qualität:
+    enabled: true
+    file: prompts/qualität.md
+    weight: 0.25
   relevanz:
-    file: "prompts/relevanz.md"
-    weight: 0.20
     enabled: true
-
-# Bewertungseinstellungen
+    file: prompts/relevanz.md
+    weight: 0.2
 scoring:
-  threshold: 0.7          # Mindest-Score für Video Download (0.0-1.0)
-  min_confidence: 0.6     # Mindest-Konfidenz der KI-Bewertung
-
-# Speicher-Konfiguration
+  min_confidence: 0.6
+  threshold: 0.7
+secrets:
+  nextcloud_service: NextcloudPW
+  nextcloud_username: steefen
+  trilium_service: TrilliumToken
+  trilium_username: token
 storage:
-  nextcloud_path: "/YouTube-Archive"
-  trilium_parent_note: "YouTube Knowledge Base"
-  sqlite_path: "data/youtube_analyzer.db"
+  nextcloud_path: /YouTube-Archive
+  sqlite_path: data/youtube_analyzer.db
+  trilium_parent_note: YouTube Knowledge Base
+whisper:
+  compute_type: float16
+  device: cuda
+  enabled: true
+  language: null
+  model: large-v3

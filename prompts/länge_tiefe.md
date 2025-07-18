@@ -1,28 +1,15 @@
-# Länge und Tiefe Analyse
+Bewerte das **Verhältnis von Videolänge zu Informationsdichte**:
 
-Bewerte ob das Video ausreichend substantielle Inhalte für die Archivierung enthält.
+## Kriterien:
+1. **Informationsdichte**: Viel Inhalt pro Zeiteinheit
+2. **Redundanz**: Wenig Wiederholungen oder Füllwörter
+3. **Fokus**: Bleibt beim Thema, wenig Abschweifen
+4. **Effizienz**: Kompakte, präzise Vermittlung
 
-## Aufgabe
-Analysiere die Inhaltsdichte und Tiefe des Videos bezogen auf die Länge.
-
-## Kriterien
-- Verhältnis von Inhalt zu Länge
-- Tiefe der behandelten Themen
-- Menge an verwertbaren Informationen
-- Redundanz und Füllmaterial
-
-## Ausgabe (JSON)
-```json
-{
-  "content_density": float (0.0-1.0),
-  "confidence": float (0.0-1.0),
-  "estimated_duration": "short|medium|long",
-  "information_value": "low|medium|high|very_high",
-  "redundancy_level": "minimal|some|moderate|high",
-  "key_insights_count": integer,
-  "recommendation": "skip|archive|priority_archive"
-}
-```
-
-## Transkript
-{transcript}
+## Bewertung:
+- **1.0**: Perfekte Balance, sehr informationsdicht
+- **0.8**: Gute Informationsdichte
+- **0.6**: Akzeptables Verhältnis
+- **0.4**: Etwas langatmig oder oberflächlich
+- **0.2**: Schlecht strukturiert, viel Füllmaterial
+- **0.0**: Zeitverschwendung, kaum Inhalt
