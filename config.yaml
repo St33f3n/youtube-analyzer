@@ -1,8 +1,8 @@
 ollama:
   host: http://localhost:11434
   max_tokens: 4000
-  model: gemma3
-  temperature: 0.1
+  model: gemma3:4b
+  temperature: 0.2
   timeout: 300
 processing:
   audio_format: mp3

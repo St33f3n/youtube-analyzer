@@ -67,11 +67,11 @@ class OceanTheme:
     YELLOW = "#f0c674"
     GOLDEN_BEIGE = "#d4c5a9"
 
+# FIXED: Pipeline Status synchronized with Pipeline Manager
 @dataclass
 class PipelineStatus:
-    """Status der verschiedenen Pipeline-Stufen"""
-    metadata_queue: int = 0
-    download_queue: int = 0
+    """Status der verschiedenen Pipeline-Stufen - SYNC mit Pipeline Manager"""
+    audio_download_queue: int = 0  # FIXED: Renamed from download_queue
     transcription_queue: int = 0
     analysis_queue: int = 0
     video_download_queue: int = 0
@@ -87,9 +87,9 @@ class PipelineStatus:
     
     def is_active(self) -> bool:
         """Prüft ob Pipeline aktiv ist"""
-        return (self.metadata_queue + self.download_queue + self.transcription_queue + 
-                self.analysis_queue + self.video_download_queue + self.upload_queue + 
-                self.processing_queue) > 0
+        return (self.audio_download_queue + self.transcription_queue + 
+                self.analysis_queue + self.video_download_queue + 
+                self.upload_queue + self.processing_queue) > 0
 
 # =============================================================================
 # PIPELINE STATUS WIDGET
@@ -124,13 +124,12 @@ class PipelineStatusWidget(QFrame):
         # Queue Grid
         grid_layout = QGridLayout()
         
-        # Queue Labels und Values
+        # Queue Labels und Values - FIXED: Synchronized with Pipeline Manager
         self.queue_labels = {}
         self.queue_values = {}
         
         queue_names = [
-            ("Metadata", "metadata_queue"),
-            ("Audio Download", "download_queue"), 
+            ("Audio Download", "audio_download_queue"),  # FIXED: Corrected name
             ("Transcription", "transcription_queue"),
             ("Analysis", "analysis_queue"),
             ("Video Download", "video_download_queue"),
@@ -177,11 +176,26 @@ class PipelineStatusWidget(QFrame):
         layout.addWidget(self.video_label)
     
     def update_status(self, status: PipelineStatus):
-        """Aktualisiert Status-Anzeige"""
+        """Aktualisiert Status-Anzeige - ENHANCED LOGGING"""
+        # Debug logging für Status-Updates
+        self.logger.debug(
+            f"GUI Status Update: Total={status.total_queued}, Completed={status.total_completed}, Failed={status.total_failed}",
+            extra={
+                'total_queued': status.total_queued,
+                'total_completed': status.total_completed,
+                'total_failed': status.total_failed,
+                'current_stage': status.current_stage,
+                'audio_download_queue': status.audio_download_queue,
+                'transcription_queue': status.transcription_queue,
+                'analysis_queue': status.analysis_queue,
+                'is_active': status.is_active()
+            }
+        )
+        
         # Current Stage
         self.current_label.setText(f"Status: {status.current_stage}")
         
-        # Queue Values
+        # Queue Values - FIXED: Correct attribute mapping
         for queue_attr, value_label in self.queue_values.items():
             count = getattr(status, queue_attr, 0)
             value_label.setText(str(count))
@@ -196,6 +210,15 @@ class PipelineStatusWidget(QFrame):
         self.total_label.setText(f"Total: {status.total_queued}")
         self.completed_label.setText(f"Completed: {status.total_completed}")
         self.failed_label.setText(f"Failed: {status.total_failed}")
+        
+        # Enhanced progress calculation
+        progress_text = f"Progress: {status.total_completed + status.total_failed}/{status.total_queued}"
+        if status.total_queued > 0:
+            progress_percent = (status.total_completed + status.total_failed) / status.total_queued * 100
+            progress_text += f" ({progress_percent:.1f}%)"
+        
+        # Update total label with progress info
+        self.total_label.setText(progress_text)
         
         # Current Video
         if status.current_video:
@@ -532,16 +555,17 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         return frame
     
     def setup_status_timer(self):
-        """Setup Timer für Status-Updates"""
+        """Setup Timer für Status-Updates - ACCELERATED"""
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.update_pipeline_status)
-        self.status_timer.start(1000)  # Update jede Sekunde
+        self.status_timer.start(100)  # IMPROVED: Update every 100ms (was 1000ms)
     
     def update_pipeline_status(self):
         """Aktualisiert Pipeline-Status-Anzeige"""
-        # TODO: Hier echte Pipeline-Status-Daten holen
-        # Momentan nur Demo-Update
-        self.status_widget.update_status(self.pipeline_status)
+        # ENHANCED: Only run if no real pipeline is connected
+        if not hasattr(self, 'pipeline_manager'):
+            # Fallback Mock-Update (nur wenn keine echte Pipeline)
+            self.status_widget.update_status(self.pipeline_status)
         
         # Button-State basierend auf Pipeline-Status
         if self.pipeline_status.is_active():
@@ -569,11 +593,16 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         
         self.logger.info(f"Starting analysis for {len(urls)} URLs")
         
-        # TODO: Pipeline-Thread starten
-        # Momentan nur Demo-Status-Update
-        self.pipeline_status.metadata_queue = len(urls)
-        self.pipeline_status.total_queued = len(urls)
-        self.pipeline_status.current_stage = "Extracting Metadata"
+        # ENHANCED: Check if real pipeline is available
+        if hasattr(self, 'pipeline_manager'):
+            # Real pipeline will be called by integrate_pipeline_with_gui
+            self.logger.info("Using real pipeline manager")
+        else:
+            # Fallback Mock-Demo
+            self.logger.info("Using mock pipeline demo")
+            self.pipeline_status.audio_download_queue = len(urls)  # FIXED: Correct attribute
+            self.pipeline_status.total_queued = len(urls)
+            self.pipeline_status.current_stage = "Extracting Metadata"
         
         self.status_bar.showMessage(f"Started analysis for {len(urls)} videos")
     

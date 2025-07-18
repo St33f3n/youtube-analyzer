@@ -11,15 +11,15 @@ from typing import List, Dict, Optional, Any, Literal
 from dataclasses import dataclass
 from pydantic import BaseModel, Field, ValidationError
 
-# Langchain imports
+# Langchain imports with new langchain-ollama package
 try:
-    from langchain_community.llms import Ollama
+    from langchain_ollama import OllamaLLM
     from langchain.prompts import PromptTemplate
     from langchain.schema import HumanMessage, SystemMessage
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
-    Ollama = None
+    OllamaLLM = None
     PromptTemplate = None
 
 # Import our core libraries
@@ -154,11 +154,11 @@ class OllamaAnalysisEngine:
         self.config = config
         self.logger = get_logger("OllamaAnalysisEngine")
         self.rule_builder = RulePromptBuilder(config)
-        self.ollama_llm: Optional[Ollama] = None
+        self.ollama_llm: Optional[OllamaLLM] = None
         
         # Validate Langchain availability
         if not LANGCHAIN_AVAILABLE:
-            self.logger.error("Langchain not available - install with: pip install langchain langchain-community")
+            self.logger.error("Langchain not available - install with: pip install langchain-ollama langchain")
             return
         
         # Initialize Ollama connection
@@ -169,12 +169,12 @@ class OllamaAnalysisEngine:
         if not LANGCHAIN_AVAILABLE:
             context = ErrorContext.create(
                 "init_ollama",
-                suggestions=["Install langchain: pip install langchain langchain-community"]
+                suggestions=["Install langchain: pip install langchain-ollama langchain"]
             )
             return Err(CoreError("Langchain not available", context))
         
         try:
-            self.ollama_llm = Ollama(
+            self.ollama_llm = OllamaLLM(
                 model=self.config.ollama.model,
                 base_url=self.config.ollama.host,
                 temperature=self.config.ollama.temperature,

@@ -24,6 +24,7 @@ from yt_analyzer_config import SecureConfigManager, AppConfig
 from yt_url_processor import process_urls_to_objects
 from yt_transcription_worker import transcribe_process_object
 from yt_audio_downloader import download_audio_for_process_object
+from yt_rulechain import analyze_process_object
 
 # =============================================================================
 # PIPELINE STATUS & ERROR TRACKING
@@ -89,10 +90,11 @@ class BaseWorker(QThread):
         self.logger = get_logger(f"Worker-{stage_name}")
         self.should_stop = threading.Event()
         self.is_processing = False
+        self.processed_count = 0
     
     def run(self):
         """Haupt-Worker-Loop"""
-        self.logger.info(f"{self.stage_name} worker started")
+        self.logger.info(f"🚀 {self.stage_name} worker started and ready")
         
         while not self.should_stop.is_set():
             try:
@@ -105,20 +107,48 @@ class BaseWorker(QThread):
                 process_obj = unwrap_ok(obj_result)
                 self.is_processing = True
                 
+                # Enhanced processing start logging
+                self.logger.info(
+                    f"🎬 {self.stage_name} processing started: {process_obj.titel}",
+                    extra={
+                        'worker_stage': self.stage_name,
+                        'video_title': process_obj.titel,
+                        'video_channel': process_obj.kanal,
+                        'processing_stage': process_obj.processing_stage,
+                        'queue_size_before': self.input_queue.size(),
+                        'worker_processed_count': self.processed_count
+                    }
+                )
+                
                 # Update status
                 self.stage_status_changed.emit(self.stage_name, self.input_queue.size())
                 
                 # Process object
                 with log_feature(f"{self.stage_name}_processing") as feature:
                     feature.add_metric("video_title", process_obj.titel)
+                    feature.add_metric("worker_stage", self.stage_name)
                     
                     process_result = self.process_object(process_obj)
                     
                     if isinstance(process_result, Ok):
                         processed_obj = unwrap_ok(process_result)
+                        self.processed_count += 1
                         
                         # Handle routing decision (especially for Analysis stage)
                         next_stage_info = self.get_routing_decision(processed_obj)
+                        
+                        # Enhanced routing logging
+                        self.logger.info(
+                            f"✅ {self.stage_name} completed: {processed_obj.titel} → {next_stage_info['next_stage']}",
+                            extra={
+                                'worker_stage': self.stage_name,
+                                'video_title': processed_obj.titel,
+                                'next_stage': next_stage_info['next_stage'],
+                                'route_to_output': next_stage_info['route_to_output'],
+                                'worker_processed_count': self.processed_count,
+                                'processing_duration': feature.metrics.get('duration_ms', 0)
+                            }
+                        )
                         
                         if next_stage_info["route_to_output"]:
                             # Send to normal output queue
@@ -127,32 +157,54 @@ class BaseWorker(QThread):
                                 if isinstance(put_result, Ok):
                                     self.object_processed.emit(processed_obj, next_stage_info["next_stage"])
                                     feature.add_metric("status", "forwarded")
+                                    
+                                    self.logger.debug(
+                                        f"📤 Forwarded to {next_stage_info['next_stage']}: {processed_obj.titel}",
+                                        extra={
+                                            'output_queue': next_stage_info['next_stage'],
+                                            'output_queue_size': self.output_queue.size()
+                                        }
+                                    )
                                 else:
-                                    self.processing_error.emit(processed_obj, f"Queue overflow: {unwrap_err(put_result).message}")
+                                    error_msg = f"Queue overflow: {unwrap_err(put_result).message}"
+                                    self.processing_error.emit(processed_obj, error_msg)
+                                    self.logger.error(f"❌ Queue overflow for {processed_obj.titel}: {error_msg}")
                             else:
                                 # Final stage - completion
                                 self.object_processed.emit(processed_obj, "completed")
                                 feature.add_metric("status", "completed")
+                                self.logger.info(f"🏁 Final completion: {processed_obj.titel}")
                         else:
                             # Route to archive (failed analysis)
                             self.object_processed.emit(processed_obj, "archive")
                             feature.add_metric("status", "archived")
+                            self.logger.info(f"📁 Archived (failed rules): {processed_obj.titel}")
                     else:
                         # Processing failed
                         error = unwrap_err(process_result)
                         process_obj.add_error(f"{self.stage_name}: {error.message}")
                         self.processing_error.emit(process_obj, error.message)
                         feature.add_metric("status", "failed")
+                        
+                        self.logger.error(
+                            f"❌ {self.stage_name} failed: {process_obj.titel}",
+                            extra={
+                                'worker_stage': self.stage_name,
+                                'video_title': process_obj.titel,
+                                'error_message': error.message,
+                                'error_context': error.context.to_dict() if hasattr(error, 'context') else {}
+                            }
+                        )
                 
                 self.input_queue.task_done()
                 self.is_processing = False
                 
             except Exception as e:
-                self.logger.error(f"Unexpected error in {self.stage_name} worker: {e}")
+                self.logger.error(f"💥 Unexpected error in {self.stage_name} worker: {e}")
                 self.is_processing = False
                 time.sleep(1)  # Avoid tight error loop
         
-        self.logger.info(f"{self.stage_name} worker stopped")
+        self.logger.info(f"🛑 {self.stage_name} worker stopped (processed {self.processed_count} videos)")
     
     def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
         """Override in subclasses - main processing logic"""
@@ -288,7 +340,7 @@ class TranscriptionWorker(BaseWorker):
         return "Analysis"
 
 class AnalysisWorker(BaseWorker):
-    """Worker für Content-Analyse via Ollama"""
+    """Worker für Content-Analyse via Ollama + Rule System"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Analysis", input_queue, output_queue)
@@ -297,53 +349,104 @@ class AnalysisWorker(BaseWorker):
     
     @log_function(log_performance=True)
     def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
-        """Analysiert Content mit Ollama + Regeln (MOCK)"""
+        """Analysiert Content mit Ollama + Rule System"""
         try:
-            # TODO: Echte Ollama + Rule System Integration
-            time.sleep(1.5)  # Simulate analysis time
-            
-            # Mock analysis results
-            import random
-            obj.rule_amount = random.randint(2, 4)
-            obj.rule_accuracy = random.uniform(0.6, 0.9)
-            obj.relevancy = random.uniform(0.5, 0.8)
-            
-            # Calculate weighted score (mock)
-            weighted_score = (obj.rule_accuracy * 0.7) + (obj.relevancy * 0.3)
-            
-            # Decision based on thresholds
-            obj.passed_analysis = (
-                weighted_score >= self.config.scoring.threshold and
-                obj.rule_accuracy >= self.config.scoring.min_confidence
-            )
-            
-            obj.analysis_results = {
-                "weighted_score": weighted_score,
-                "decision": "DOWNLOAD" if obj.passed_analysis else "SKIP",
-                "rules_fulfilled": obj.rule_amount,
-                "mock_analysis": True
-            }
-            
-            obj.update_stage("analyzed")
-            
             self.logger.info(
-                f"Analysis completed: {obj.titel} -> {'DOWNLOAD' if obj.passed_analysis else 'SKIP'}",
+                f"🧠 Starting content analysis for: {obj.titel}",
                 extra={
-                    "score": weighted_score,
-                    "threshold": self.config.scoring.threshold,
-                    "decision": obj.passed_analysis
+                    'video_title': obj.titel,
+                    'transcript_length': len(obj.transkript or ""),
+                    'ollama_model': self.config.ollama.model,
+                    'rules_enabled': list(self.config.rules.get_enabled_rules().keys()),
+                    'scoring_threshold': self.config.scoring.threshold,
+                    'min_confidence': self.config.scoring.min_confidence,
+                    'total_rules_weight': self.config.rules.get_total_weight()
                 }
             )
             
-            return Ok(obj)
+            # Use the real analysis function from yt_rulechain
+            analysis_result = analyze_process_object(obj, self.config)
+            
+            if isinstance(analysis_result, Ok):
+                analyzed_obj = unwrap_ok(analysis_result)
+                
+                # Enhanced analysis completion logging with detailed rule results
+                decision = "DOWNLOAD" if analyzed_obj.passed_analysis else "SKIP"
+                
+                # Extract detailed rule analysis if available
+                rule_details = {}
+                if analyzed_obj.analysis_results and isinstance(analyzed_obj.analysis_results, dict):
+                    rules_analysis = analyzed_obj.analysis_results.get('rules_analysis', [])
+                    for rule in rules_analysis:
+                        if isinstance(rule, dict):
+                            rule_name = rule.get('rule_name', 'unknown')
+                            rule_details[rule_name] = {
+                                'fulfilled': rule.get('fulfilled', False),
+                                'score': rule.get('score', 0.0),
+                                'confidence': rule.get('confidence', 0.0),
+                                'reasoning': rule.get('reasoning', '')[:100]  # First 100 chars
+                            }
+                
+                # Comprehensive analysis logging
+                analysis_info = (
+                    f"✅ Content analysis completed: {analyzed_obj.titel} → {decision}\n"
+                    f"  📊 Overall Score: {analyzed_obj.relevancy:.3f} (threshold: {self.config.scoring.threshold})\n"
+                    f"  🎯 Confidence: {analyzed_obj.rule_accuracy:.3f} (min: {self.config.scoring.min_confidence})\n"
+                    f"  📋 Rules fulfilled: {analyzed_obj.rule_amount}/{len(self.config.rules.get_enabled_rules())}\n"
+                    f"  🤖 Model: {self.config.ollama.model}\n"
+                    f"  📝 Transcript: {len(obj.transkript or '')} chars\n"
+                    f"  ⚖️ Decision factors: score_ok={analyzed_obj.relevancy >= self.config.scoring.threshold}, confidence_ok={analyzed_obj.rule_accuracy >= self.config.scoring.min_confidence}"
+                )
+                
+                self.logger.info(analysis_info)
+                
+                # Log individual rule results for debugging
+                if rule_details:
+                    self.logger.info(
+                        f"📋 Rule-by-rule analysis for: {analyzed_obj.titel}",
+                        extra={
+                            'video_title': analyzed_obj.titel,
+                            'rule_details': rule_details,
+                            'analysis_summary': analyzed_obj.analysis_results.get('summary', 'No summary') if analyzed_obj.analysis_results else 'No summary'
+                        }
+                    )
+                
+                return Ok(analyzed_obj)
+            else:
+                # Analysis failed - log detailed error
+                error = unwrap_err(analysis_result)
+                self.logger.error(
+                    f"❌ Content analysis failed for: {obj.titel}",
+                    extra={
+                        'video_title': obj.titel,
+                        'error_message': error.message,
+                        'error_context': error.context.to_dict() if hasattr(error, 'context') else {},
+                        'transcript_length': len(obj.transkript or ""),
+                        'ollama_model': self.config.ollama.model,
+                        'ollama_host': self.config.ollama.host,
+                        'enabled_rules': list(self.config.rules.get_enabled_rules().keys())
+                    }
+                )
+                return analysis_result
             
         except Exception as e:
             context = ErrorContext.create(
-                "content_analysis",
-                input_data={"title": obj.titel, "transcript_length": len(obj.transkript or "")},
-                suggestions=["Check Ollama connection", "Verify rule files"]
+                "content_analysis_worker",
+                input_data={
+                    "title": obj.titel, 
+                    "transcript_length": len(obj.transkript or ""),
+                    "ollama_model": self.config.ollama.model,
+                    "ollama_host": self.config.ollama.host
+                },
+                suggestions=[
+                    "Check Ollama connectivity", 
+                    "Verify rule files exist", 
+                    "Check GPU/CUDA setup",
+                    "Verify rule configuration",
+                    f"Test Ollama: curl {self.config.ollama.host}/api/tags"
+                ]
             )
-            return Err(CoreError(f"Content analysis failed: {e}", context))
+            return Err(CoreError(f"Analysis worker failed: {e}", context))
     
     def get_routing_decision(self, obj: ProcessObject) -> Dict[str, Any]:
         """Conditional routing basierend auf Analysis-Ergebnis"""
@@ -428,6 +531,9 @@ class PipelineManager(QThread):
         self.processing_errors: List[ProcessingError] = []
         self.completed_videos: List[ProcessObject] = []
         
+        # FIXED: Static video count for accurate GUI display
+        self.initial_video_count: int = 0
+        
         # Queues für Pipeline-Stages (Metadata-Queue entfernt)
         self.queues = {
             "audio_download": ProcessingQueue("audio_download"),
@@ -441,10 +547,10 @@ class PipelineManager(QThread):
         # Workers
         self.workers: List[BaseWorker] = []
         
-        # Status Update Timer
+        # Status Update Timer - IMPROVED: Much faster updates
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.emit_status_update)
-        self.status_timer.start(500)  # Update every 500ms
+        self.status_timer.start(100)  # Update every 100ms (was 200ms)
     
     def start_pipeline(self, urls_text: str) -> Result[None, CoreError]:
         """Startet Pipeline für Multiline-URL-Text"""
@@ -454,18 +560,31 @@ class PipelineManager(QThread):
         self.input_urls_text = urls_text
         self.processing_errors.clear()
         self.completed_videos.clear()
+        self.initial_video_count = 0  # Reset
         
-        self.logger.info(f"Starting pipeline for URL input (length: {len(urls_text)} chars)")
+        self.logger.info(f"🚀 Starting pipeline for URL input (length: {len(urls_text)} chars)")
         
         with log_feature("pipeline_startup") as feature:
-            # Step 1: Process URLs to ProcessObjects with Metadata
+            # Step 1: Process URLs to ProcessObjects with Metadata - ENHANCED LOGGING
+            self.logger.info("📝 Step 1: Processing URLs to ProcessObjects...")
             objects_result = process_urls_to_objects(urls_text, self.config.processing.__dict__)
             
             if isinstance(objects_result, Err):
                 errors = unwrap_err(objects_result)
                 error_summary = f"Failed to process URLs: {len(errors)} errors"
-                for error in errors[:3]:  # Log first 3 errors
-                    self.logger.error(f"URL processing error: {error.message}")
+                
+                # Enhanced error logging
+                self.logger.error(
+                    f"❌ URL processing failed with {len(errors)} errors",
+                    extra={
+                        'input_length': len(urls_text),
+                        'error_count': len(errors),
+                        'first_3_errors': [str(e.message) for e in errors[:3]]
+                    }
+                )
+                
+                for i, error in enumerate(errors[:3]):  # Log first 3 errors
+                    self.logger.error(f"URL processing error {i+1}: {error.message}")
                 
                 feature.add_metric("url_processing_errors", len(errors))
                 return Err(CoreError(error_summary))
@@ -473,32 +592,99 @@ class PipelineManager(QThread):
             process_objects = unwrap_ok(objects_result)
             
             if not process_objects:
+                self.logger.error("❌ No valid videos found in input")
                 return Err(CoreError("No valid videos found in input"))
+            
+            # ENHANCED: Log extracted video details
+            self.logger.info(
+                f"✅ Successfully extracted {len(process_objects)} videos",
+                extra={
+                    'extracted_count': len(process_objects),
+                    'video_titles': [obj.titel[:50] for obj in process_objects[:3]],  # First 3 titles
+                    'video_channels': list(set([obj.kanal for obj in process_objects])),
+                    'total_duration_minutes': sum(
+                        (obj.länge.hour * 60 + obj.länge.minute + obj.länge.second / 60) 
+                        for obj in process_objects if obj.länge
+                    )
+                }
+            )
             
             feature.add_metric("extracted_videos", len(process_objects))
             
-            # Step 2: Check for duplicates in Archive Database
+            # Step 2: Check for duplicates in Archive Database - ENHANCED LOGGING
+            self.logger.info("🔍 Step 2: Checking for duplicates...")
             # TODO: Implement duplicate checking
             unique_objects = process_objects  # For now, process all
             
-            # Step 3: Queue ProcessObjects for Audio Download
-            for process_obj in unique_objects:
-                put_result = self.queues["audio_download"].put(process_obj)
-                if isinstance(put_result, Err):
-                    self.logger.error(f"Failed to queue video {process_obj.titel}: {unwrap_err(put_result).message}")
+            self.logger.info(
+                f"✅ Duplicate check completed: {len(unique_objects)} unique videos to process",
+                extra={
+                    'total_extracted': len(process_objects),
+                    'unique_videos': len(unique_objects),
+                    'duplicates_found': len(process_objects) - len(unique_objects)
+                }
+            )
             
-            # Step 4: Setup and start workers
+            # FIXED: Set static video count for GUI
+            self.initial_video_count = len(unique_objects)
+            
+            # Step 3: Queue ProcessObjects for Audio Download - ENHANCED LOGGING
+            self.logger.info("📤 Step 3: Queuing videos for audio download...")
+            queued_count = 0
+            failed_queue_count = 0
+            
+            for i, process_obj in enumerate(unique_objects):
+                put_result = self.queues["audio_download"].put(process_obj)
+                if isinstance(put_result, Ok):
+                    queued_count += 1
+                    self.logger.debug(
+                        f"📤 Queued video {i+1}/{len(unique_objects)}: {process_obj.titel}",
+                        extra={
+                            'video_number': i+1,
+                            'total_videos': len(unique_objects),
+                            'video_title': process_obj.titel,
+                            'queue_size': self.queues["audio_download"].size()
+                        }
+                    )
+                else:
+                    failed_queue_count += 1
+                    error_msg = unwrap_err(put_result).message
+                    self.logger.error(f"❌ Failed to queue video {process_obj.titel}: {error_msg}")
+            
+            self.logger.info(
+                f"✅ Queueing completed: {queued_count} queued, {failed_queue_count} failed",
+                extra={
+                    'queued_successfully': queued_count,
+                    'queue_failures': failed_queue_count,
+                    'audio_download_queue_size': self.queues["audio_download"].size()
+                }
+            )
+            
+            # Step 4: Setup and start workers - ENHANCED LOGGING
+            self.logger.info("🔧 Step 4: Setting up worker threads...")
             setup_result = self.setup_workers()
             if isinstance(setup_result, Err):
                 return setup_result
             
-            feature.add_metric("videos_queued", len(unique_objects))
+            feature.add_metric("videos_queued", queued_count)
+            feature.add_metric("queue_failures", failed_queue_count)
             feature.add_metric("workers_started", len(self.workers))
+            feature.add_metric("initial_video_count", self.initial_video_count)
         
         self.state = PipelineState.RUNNING
         self.start()  # Start QThread
         
-        self.logger.info(f"Pipeline started successfully with {len(unique_objects)} videos")
+        # Enhanced pipeline start completion logging
+        pipeline_info = (
+            f"🚀 Pipeline started successfully:\n"
+            f"  📹 Videos to process: {self.initial_video_count}\n"
+            f"  📤 Successfully queued: {queued_count}\n"
+            f"  🔧 Workers started: {len(self.workers)}\n"
+            f"  🎯 Audio download queue: {self.queues['audio_download'].size()}\n"
+            f"  📊 Status updates: every 100ms"
+        )
+        
+        self.logger.info(pipeline_info)
         return Ok(None)
     
     def setup_workers(self) -> Result[None, CoreError]:
@@ -517,7 +703,7 @@ class PipelineManager(QThread):
                 (ProcessingWorker, "processing", None)  # Final stage
             ]
             
-            for worker_class, input_queue_name, output_queue_name in workers_config:
+            for i, (worker_class, input_queue_name, output_queue_name) in enumerate(workers_config):
                 input_queue = self.queues[input_queue_name]
                 output_queue = self.queues[output_queue_name] if output_queue_name else None
                 
@@ -530,8 +716,21 @@ class PipelineManager(QThread):
                 
                 self.workers.append(worker)
                 worker.start()
+                
+                # Enhanced worker start logging
+                self.logger.info(
+                    f"✅ Worker {i+1}/{len(workers_config)} started: {worker.stage_name}",
+                    extra={
+                        'worker_number': i+1,
+                        'total_workers': len(workers_config),
+                        'worker_stage': worker.stage_name,
+                        'input_queue': input_queue_name,
+                        'output_queue': output_queue_name or 'final',
+                        'input_queue_size': input_queue.size()
+                    }
+                )
             
-            self.logger.info(f"Started {len(self.workers)} worker threads")
+            self.logger.info(f"🎉 All {len(self.workers)} worker threads started and ready")
             return Ok(None)
             
         except Exception as e:
@@ -543,11 +742,21 @@ class PipelineManager(QThread):
     
     def on_object_processed(self, obj: ProcessObject, next_stage: str):
         """Handler für erfolgreich verarbeitete Objects"""
-        self.logger.debug(f"Object processed: {obj.titel} -> {next_stage}")
+        self.logger.debug(
+            f"📋 Object processed: {obj.titel} → {next_stage}",
+            extra={
+                'video_title': obj.titel,
+                'next_stage': next_stage,
+                'processing_stage': obj.processing_stage,
+                'current_completed': len(self.completed_videos),
+                'current_failed': len(self.processing_errors)
+            }
+        )
         
         if next_stage == "completed":
             self.completed_videos.append(obj)
             self.video_completed.emit(obj.titel, True)
+            self.logger.info(f"🏁 Video completed successfully: {obj.titel}")
             # TODO: Save to ArchiveDatabase
         elif next_stage == "archive":
             # Failed analysis - archive only (no video download)
@@ -555,14 +764,14 @@ class PipelineManager(QThread):
             self.completed_videos.append(obj)
             self.video_completed.emit(obj.titel, False)
             # TODO: Save to ArchiveDatabase as failed
-            self.logger.info(f"Video archived (failed analysis): {obj.titel}")
+            self.logger.info(f"📁 Video archived (failed analysis): {obj.titel}")
         # Note: Normal stage transitions don't emit video_completed
     
     def on_processing_error(self, obj: ProcessObject, error_message: str):
         """Handler für Processing-Fehler"""
         error = ProcessingError(
             video_title=obj.titel,
-            video_url=obj.titel,  # TODO: Extract original URL
+            video_url=obj.original_url or obj.titel,
             stage=obj.processing_stage,
             error_message=error_message,
             timestamp=datetime.now(),
@@ -572,7 +781,16 @@ class PipelineManager(QThread):
         self.processing_errors.append(error)
         self.video_completed.emit(obj.titel, False)
         
-        self.logger.error(f"Processing error: {obj.titel} in {obj.processing_stage}: {error_message}")
+        self.logger.error(
+            f"💥 Processing error: {obj.titel} in {obj.processing_stage}",
+            extra={
+                'video_title': obj.titel,
+                'processing_stage': obj.processing_stage,
+                'error_message': error_message,
+                'total_errors': len(self.processing_errors),
+                'total_completed': len(self.completed_videos)
+            }
+        )
     
     def on_stage_status_changed(self, stage_name: str, queue_size: int):
         """Handler für Stage-Status-Änderungen"""
@@ -586,7 +804,9 @@ class PipelineManager(QThread):
         
         # Check if any workers are actively processing
         workers_active = any(worker.is_processing for worker in self.workers if worker.isRunning())
+        active_worker_names = [worker.stage_name for worker in self.workers if worker.is_processing]
         
+        # FIXED: Use static initial_video_count instead of dynamic calculation
         status = PipelineStatus(
             audio_download_queue=self.queues["audio_download"].size(),
             transcription_queue=self.queues["transcription"].size(),
@@ -595,7 +815,7 @@ class PipelineManager(QThread):
             upload_queue=self.queues["upload"].size(),
             processing_queue=self.queues["processing"].size(),
             
-            total_queued=self.get_total_objects_count(),
+            total_queued=self.initial_video_count,  # FIXED: Static count
             total_completed=len(self.completed_videos),
             total_failed=len(self.processing_errors),
             
@@ -605,31 +825,50 @@ class PipelineManager(QThread):
         
         self.status_updated.emit(status)
         
+        # Enhanced debug logging every 20th update (every 2 seconds at 100ms)
+        if hasattr(self, '_status_update_counter'):
+            self._status_update_counter += 1
+        else:
+            self._status_update_counter = 1
+        
+        if self._status_update_counter % 20 == 0:  # Every 2 seconds at 100ms intervals
+            self.logger.debug(
+                f"📊 Pipeline status update #{self._status_update_counter}",
+                extra={
+                    'total_videos': self.initial_video_count,
+                    'completed': len(self.completed_videos),
+                    'failed': len(self.processing_errors),
+                    'remaining': self.initial_video_count - len(self.completed_videos) - len(self.processing_errors),
+                    'queue_sizes': {name: queue.size() for name, queue in self.queues.items()},
+                    'active_workers': active_worker_names,
+                    'workers_running': len([w for w in self.workers if w.isRunning()]),
+                    'current_stage': status.current_stage
+                }
+            )
+        
         # Check if pipeline finished (IMPROVED - consider active workers!)
         if not status.is_active() and not workers_active and self.state == PipelineState.RUNNING:
             self.logger.debug(
-                f"Pipeline finish check: queues_empty={not status.is_active()}, workers_active={workers_active}",
+                f"🏁 Pipeline finish check: queues_empty={not status.is_active()}, workers_active={workers_active}",
                 extra={
                     'queue_sizes': {name: queue.size() for name, queue in self.queues.items()},
-                    'active_workers': [worker.stage_name for worker in self.workers if worker.is_processing],
-                    'running_workers': [worker.stage_name for worker in self.workers if worker.isRunning()]
+                    'active_workers': active_worker_names,
+                    'running_workers': [worker.stage_name for worker in self.workers if worker.isRunning()],
+                    'total_processed': len(self.completed_videos) + len(self.processing_errors),
+                    'initial_count': self.initial_video_count
                 }
             )
             self.finish_pipeline()
         elif workers_active:
-            self.logger.debug(
-                f"Pipeline still active - workers processing",
-                extra={
-                    'active_workers': [worker.stage_name for worker in self.workers if worker.is_processing],
-                    'queue_sizes': {name: queue.size() for name, queue in self.queues.items()}
-                }
-            )
-    
-    def get_total_objects_count(self) -> int:
-        """Ermittelt Gesamtzahl der Objects in der Pipeline"""
-        # Count objects in all queues + completed + failed
-        queue_count = sum(queue.size() for queue in self.queues.values())
-        return queue_count + len(self.completed_videos) + len(self.processing_errors)
+            # Only log this occasionally to avoid spam
+            if self._status_update_counter % 50 == 0:  # Every 5 seconds at 100ms intervals
+                self.logger.debug(
+                    f"⚡ Pipeline still active - workers processing",
+                    extra={
+                        'active_workers': active_worker_names,
+                        'queue_sizes': {name: queue.size() for name, queue in self.queues.items()}
+                    }
+                )
     
     def get_current_stage(self) -> str:
         """Ermittelt aktuelle Haupt-Processing-Stage"""
@@ -647,7 +886,17 @@ class PipelineManager(QThread):
         """Beendet Pipeline und sendet Final-Summary"""
         total_processed = len(self.completed_videos) + len(self.processing_errors)
         
-        self.logger.info(f"Pipeline finished: {len(self.completed_videos)} completed, {len(self.processing_errors)} failed")
+        # Enhanced pipeline completion logging
+        completion_info = (
+            f"🏁 Pipeline finished:\n"
+            f"  📹 Total videos: {self.initial_video_count}\n"
+            f"  ✅ Completed: {len(self.completed_videos)}\n"
+            f"  ❌ Failed: {len(self.processing_errors)}\n"
+            f"  📊 Success rate: {len(self.completed_videos) / self.initial_video_count * 100:.1f}%\n"
+            f"  ⏱️ Total processed: {total_processed}/{self.initial_video_count}"
+        )
+        
+        self.logger.info(completion_info)
         
         self.cleanup_workers()
         self.state = PipelineState.FINISHED
@@ -656,7 +905,7 @@ class PipelineManager(QThread):
         error_messages = [f"{err.stage}: {err.error_message}" for err in self.processing_errors]
         
         self.pipeline_finished.emit(
-            total_processed,
+            self.initial_video_count,  # FIXED: Use initial count
             len(self.completed_videos),
             error_messages
         )
@@ -668,7 +917,7 @@ class PipelineManager(QThread):
         if self.state != PipelineState.RUNNING:
             return
         
-        self.logger.info("Stopping pipeline...")
+        self.logger.info("🛑 Stopping pipeline...")
         self.state = PipelineState.STOPPING
         
         # Stop all workers
@@ -679,7 +928,7 @@ class PipelineManager(QThread):
             self.wait(5000)
         
         self.state = PipelineState.IDLE
-        self.logger.info("Pipeline stopped")
+        self.logger.info("✅ Pipeline stopped")
     
     def cleanup_workers(self):
         """Beendet alle Worker-Threads"""
@@ -687,6 +936,7 @@ class PipelineManager(QThread):
             worker.stop_worker()
         
         self.workers.clear()
+        self.logger.debug(f"🧹 Cleaned up {len(self.workers)} workers")
     
     def run(self):
         """QThread main loop - minimal da Timer-basiert"""
