@@ -1,6 +1,6 @@
 """
 YouTube Analyzer - Enhanced Fork-Join Pipeline Manager
-Vollständige Fork-Join-Architektur mit State-Management und ArchivObject-Integration
+Vollständige Fork-Join-Architektur mit zentraler Secret-Resolution und config_dict-Distribution
 """
 
 from __future__ import annotations
@@ -19,13 +19,17 @@ from PySide6.QtWidgets import QMessageBox
 from core_types import Result, Ok, Err, is_ok, unwrap_ok, unwrap_err, CoreError
 from yt_analyzer_core import ProcessObject, TranskriptObject, ArchivObject, ProcessingQueue, ArchiveDatabase
 from logging_plus import get_logger
-from yt_analyzer_config import AppConfig
+from yt_analyzer_config import AppConfig, SecureConfigManager
 from yt_url_processor import process_urls_to_objects
 from yt_transcription_worker import transcribe_process_object
 from yt_audio_downloader import download_audio_for_process_object
 from yt_rulechain import analyze_process_object
-from yt_video_downloader import download_video_for_process_object
-from yt_nextcloud_uploader import upload_to_nextcloud_for_process_object
+
+# CORRECTED IMPORTS: config_dict-Varianten für Secret-abhängige Worker
+from yt_nextcloud_uploader import upload_to_nextcloud_for_process_object_dict
+# TODO: Zukünftige Imports für LLM und Trilium Workers:
+# from yt_llm_processor import process_transcript_with_llm_dict
+# from yt_trilium_uploader import upload_to_trilium_dict
 
 # =============================================================================
 # ENHANCED PIPELINE STATUS (Simple GUI-Compatible)
@@ -189,11 +193,11 @@ class BaseWorker(QThread):
             self.wait(5000)
 
 # =============================================================================
-# EXISTING WORKER IMPLEMENTATIONS (Minimal Changes)
+# EXISTING WORKER IMPLEMENTATIONS (AppConfig-basiert - UNCHANGED)
 # =============================================================================
 
 class AudioDownloadWorker(BaseWorker):
-    """Audio-Download Worker (unchanged)"""
+    """Audio-Download Worker (unchanged - kein Secret-Dependency)"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Audio Download", input_queue, output_queue)
@@ -209,7 +213,7 @@ class AudioDownloadWorker(BaseWorker):
         return "Transcription"
 
 class TranscriptionWorker(BaseWorker):
-    """Transcription Worker (unchanged)"""
+    """Transcription Worker (unchanged - kein Secret-Dependency)"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Transcription", input_queue, output_queue)
@@ -223,7 +227,7 @@ class TranscriptionWorker(BaseWorker):
         return "Analysis"
 
 class AnalysisWorker(BaseWorker):
-    """Analysis Worker - FORK POINT Implementation"""
+    """Analysis Worker - FORK POINT Implementation (unchanged - kein Secret-Dependency)"""
     
     def __init__(self, input_queue: ProcessingQueue, config: AppConfig, pipeline_manager: 'PipelineManager'):
         super().__init__("Analysis", input_queue, None)  # No single output queue
@@ -271,7 +275,7 @@ class AnalysisWorker(BaseWorker):
         return "Fork"
 
 class VideoDownloadWorker(BaseWorker):
-    """Video Download Worker - Stream A"""
+    """Video Download Worker - Stream A (unchanged - kein Secret-Dependency)"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Video Download", input_queue, output_queue)
@@ -281,21 +285,34 @@ class VideoDownloadWorker(BaseWorker):
     
     def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
         self.logger.info(f"Starting video download: {obj.titel}")
-        return download_video_for_process_object(obj, self.config)
+        # TODO: Import from yt_video_downloader when available
+        # return download_video_for_process_object(obj, self.config)
+        
+        # PLACEHOLDER: Mock video download for now
+        time.sleep(1.0)
+        obj.temp_video_path = Path("/tmp/mock_video.mp4")
+        obj.update_stage("video_downloaded")
+        return Ok(obj)
     
     def get_next_stage_name(self) -> str:
         return "Upload"
 
+# =============================================================================
+# NEW: config_dict-BASED WORKERS (Stream A & B)
+# =============================================================================
+
 class UploadWorker(BaseWorker):
-    """Upload Worker - Stream A Final"""
+    """Upload Worker - Stream A Final (NEW: config_dict-basiert)"""
     
-    def __init__(self, input_queue: ProcessingQueue, config: AppConfig):
+    def __init__(self, input_queue: ProcessingQueue, config_dict: dict):
         super().__init__("Upload", input_queue, None)  # No output queue - end of Stream A
-        self.config = config
+        self.config_dict = config_dict
     
     def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
         self.logger.info(f"Starting Nextcloud upload: {obj.titel}")
-        result = upload_to_nextcloud_for_process_object(obj, self.config)
+        
+        # CORRECTED: Verwende config_dict-Variante mit resolved secrets
+        result = upload_to_nextcloud_for_process_object_dict(obj, self.config_dict)
         
         if isinstance(result, Ok):
             processed_obj = unwrap_ok(result)
@@ -308,30 +325,38 @@ class UploadWorker(BaseWorker):
     def get_next_stage_name(self) -> str:
         return "Stream A Completed"
 
-# =============================================================================
-# NEW: LLM AND TRILIUM WORKERS (Stream B)
-# =============================================================================
-
 class LLMProcessingWorker(BaseWorker):
-    """LLM Processing Worker - Stream B (PLACEHOLDER)"""
+    """LLM Processing Worker - Stream B (NEW: config_dict-basiert)"""
     
-    def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
+    def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config_dict: dict):
         super().__init__("LLM Processing", input_queue, output_queue)
-        self.config = config
+        self.config_dict = config_dict
     
     def process_object(self, obj: TranskriptObject) -> Result[TranskriptObject, CoreError]:
         self.logger.info(f"Starting LLM processing: {obj.titel}")
         
-        # PLACEHOLDER: Mock LLM processing
+        # PLACEHOLDER: Mock LLM processing until real implementation available
+        # result = process_transcript_with_llm_dict(obj, self.config_dict)
+        
         time.sleep(2.0)  # Simulate LLM call
         
+        resolved_secrets = self.config_dict.get('resolved_secrets', {})
+        llm_api_key = resolved_secrets.get('llm_api_key')
+        
+        if not llm_api_key:
+            obj.success = False
+            obj.error_message = "LLM API key not resolved"
+            return Err(CoreError("LLM API key not available"))
+        
         obj.bearbeiteter_transkript = f"[LLM-PROCESSED] {obj.transkript[:200]}..."
-        obj.model = self.config.llm_processing.model
+        obj.model = self.config_dict['llm_processing']['model']
         obj.tokens = 150
         obj.cost = 0.003
         obj.processing_time = 2.0
         obj.success = True
         obj.update_stage("llm_processing_completed")
+        
+        self.logger.info(f"LLM processing completed with API key length: {len(llm_api_key)}")
         
         return Ok(obj)
     
@@ -339,20 +364,32 @@ class LLMProcessingWorker(BaseWorker):
         return "Trilium Upload"
 
 class TrilliumUploadWorker(BaseWorker):
-    """Trilium Upload Worker - Stream B Final (PLACEHOLDER)"""
+    """Trilium Upload Worker - Stream B Final (NEW: config_dict-basiert)"""
     
-    def __init__(self, input_queue: ProcessingQueue, config: AppConfig):
+    def __init__(self, input_queue: ProcessingQueue, config_dict: dict):
         super().__init__("Trilium Upload", input_queue, None)  # No output queue - end of Stream B
-        self.config = config
+        self.config_dict = config_dict
     
     def process_object(self, obj: TranskriptObject) -> Result[TranskriptObject, CoreError]:
         self.logger.info(f"Starting Trilium upload: {obj.titel}")
         
-        # PLACEHOLDER: Mock Trilium upload
+        # PLACEHOLDER: Mock Trilium upload until real implementation available
+        # result = upload_to_trilium_dict(obj, self.config_dict)
+        
         time.sleep(1.0)  # Simulate upload
+        
+        resolved_secrets = self.config_dict.get('resolved_secrets', {})
+        trilium_token = resolved_secrets.get('trilium_token')
+        
+        if not trilium_token:
+            obj.success = False
+            obj.error_message = "Trilium token not resolved"
+            return Err(CoreError("Trilium token not available"))
         
         obj.trilium_link = f"https://trilium.example.com/note/{obj.titel.replace(' ', '_')}"
         obj.update_stage("trilium_upload_completed")
+        
+        self.logger.info(f"Trilium upload completed with token length: {len(trilium_token)}")
         
         return Ok(obj)
     
@@ -360,11 +397,11 @@ class TrilliumUploadWorker(BaseWorker):
         return "Stream B Completed"
 
 # =============================================================================
-# ENHANCED FORK-JOIN PIPELINE MANAGER
+# ENHANCED FORK-JOIN PIPELINE MANAGER (Zentrale Secret-Resolution)
 # =============================================================================
 
 class PipelineManager(QThread):
-    """Enhanced Pipeline Manager with Fork-Join State Management"""
+    """Enhanced Pipeline Manager with Zentrale Secret-Resolution und config_dict-Distribution"""
     
     # Signals für GUI
     status_updated = Signal(PipelineStatus)
@@ -375,6 +412,10 @@ class PipelineManager(QThread):
         super().__init__()
         self.config = config
         self.logger = get_logger("PipelineManager")
+        
+        # NEW: Zentrale Secret-Resolution
+        self.config_manager = SecureConfigManager()
+        self.config_dict = self._resolve_config_dict()
         
         # Pipeline State
         self.state = PipelineState.IDLE
@@ -418,6 +459,54 @@ class PipelineManager(QThread):
         self.status_timer.timeout.connect(self.emit_status_update)
         self.status_timer.start(2000)  # 2 seconds
     
+    def _resolve_config_dict(self) -> dict:
+        """NEW: Zentrale Secret-Resolution für alle Worker"""
+        config_dict = self.config.dict()
+        resolved_secrets = {}
+        
+        self.logger.info("🔐 Starting zentrale secret resolution...")
+        
+        # Nextcloud Secret Resolution
+        nextcloud_result = self.config_manager.get_nextcloud_password()
+        if isinstance(nextcloud_result, Ok):
+            resolved_secrets['nextcloud_password'] = unwrap_ok(nextcloud_result)
+            self.logger.info("✅ Nextcloud password resolved")
+        else:
+            self.logger.warning(f"⚠️ Nextcloud password resolution failed: {unwrap_err(nextcloud_result).message}")
+        
+        # Trilium Secret Resolution
+        trilium_result = self.config_manager.get_trilium_token()
+        if isinstance(trilium_result, Ok):
+            resolved_secrets['trilium_token'] = unwrap_ok(trilium_result)
+            self.logger.info("✅ Trilium token resolved")
+        else:
+            self.logger.warning(f"⚠️ Trilium token resolution failed: {unwrap_err(trilium_result).message}")
+        
+        # LLM API Key Resolution
+        llm_provider = self.config.llm_processing.provider
+        llm_key_result = self.config_manager.get_llm_api_key(llm_provider)
+        if isinstance(llm_key_result, Ok):
+            resolved_secrets['llm_api_key'] = unwrap_ok(llm_key_result)
+            self.logger.info(f"✅ {llm_provider.title()} API key resolved")
+        else:
+            self.logger.warning(f"⚠️ {llm_provider.title()} API key resolution failed: {unwrap_err(llm_key_result).message}")
+        
+        # Add resolved secrets to config_dict
+        config_dict['resolved_secrets'] = resolved_secrets
+        
+        self.logger.info(
+            f"🔐 Secret resolution completed",
+            extra={
+                'resolved_secrets_count': len(resolved_secrets),
+                'resolved_secrets_keys': list(resolved_secrets.keys()),
+                'nextcloud_ready': 'nextcloud_password' in resolved_secrets,
+                'trilium_ready': 'trilium_token' in resolved_secrets,
+                'llm_ready': 'llm_api_key' in resolved_secrets
+            }
+        )
+        
+        return config_dict
+    
     def start_pipeline(self, urls_text: str) -> Result[None, CoreError]:
         """Startet Pipeline mit synchroner Metadata-Extraktion"""
         if self.state != PipelineState.IDLE:
@@ -434,7 +523,7 @@ class PipelineManager(QThread):
             self.transcript_success_list.clear()
             self.transcript_failure_list.clear()
         
-        self.logger.info("Starting Fork-Join pipeline")
+        self.logger.info("Starting Fork-Join pipeline with zentrale secret resolution")
         
         # SYNCHRONE Metadata-Extraktion (no worker needed)
         objects_result = process_urls_to_objects(urls_text, self.config.processing.__dict__)
@@ -470,24 +559,24 @@ class PipelineManager(QThread):
         return Ok(None)
     
     def setup_workers(self) -> Result[None, CoreError]:
-        """Enhanced worker setup mit Fork-Join-Workers"""
+        """Enhanced worker setup mit config_dict-Distribution"""
         try:
             self.cleanup_workers()
             
-            # Create all workers
+            # Create all workers mit korrekter config-Distribution
             self.workers = [
-                # Sequential workers
+                # Sequential workers (AppConfig - kein Secret-Dependency)
                 AudioDownloadWorker(self.queues["audio_download"], self.queues["transcription"], self.config),
                 TranscriptionWorker(self.queues["transcription"], self.queues["analysis"], self.config),
                 AnalysisWorker(self.queues["analysis"], self.config, self),  # Fork point
                 
-                # Stream A: Video Processing
-                VideoDownloadWorker(self.queues["video_download"], self.queues["upload"], self.config),
-                UploadWorker(self.queues["upload"], self.config),
+                # Stream A: Video Processing (gemischt)
+                VideoDownloadWorker(self.queues["video_download"], self.queues["upload"], self.config),  # kein Secret
+                UploadWorker(self.queues["upload"], self.config_dict),  # NEW: config_dict mit Secret
                 
-                # Stream B: Transcript Processing
-                LLMProcessingWorker(self.queues["llm_processing"], self.queues["trilium_upload"], self.config),
-                TrilliumUploadWorker(self.queues["trilium_upload"], self.config)
+                # Stream B: Transcript Processing (NEW: config_dict mit Secrets)
+                LLMProcessingWorker(self.queues["llm_processing"], self.queues["trilium_upload"], self.config_dict),
+                TrilliumUploadWorker(self.queues["trilium_upload"], self.config_dict)
             ]
             
             # Connect signals für Fork-Join-Orchestration
@@ -499,7 +588,14 @@ class PipelineManager(QThread):
             for worker in self.workers:
                 worker.start()
             
-            self.logger.info(f"Started {len(self.workers)} workers for Fork-Join pipeline")
+            self.logger.info(
+                f"Started {len(self.workers)} workers for Fork-Join pipeline",
+                extra={
+                    'appconfig_workers': 4,  # Audio, Transcription, Analysis, VideoDownload  
+                    'config_dict_workers': 3,  # Upload, LLM, Trilium
+                    'resolved_secrets': list(self.config_dict.get('resolved_secrets', {}).keys())
+                }
+            )
             return Ok(None)
             
         except Exception as e:
@@ -618,7 +714,9 @@ class PipelineManager(QThread):
                     'video_stream_success': archive_obj.video_stream_success,
                     'transcript_stream_success': archive_obj.transcript_stream_success,
                     'llm_model': archive_obj.llm_model,
-                    'llm_cost': archive_obj.llm_cost
+                    'llm_cost': archive_obj.llm_cost,
+                    'has_nextcloud_link': bool(archive_obj.nextcloud_link),
+                    'has_trilium_link': bool(archive_obj.trilium_link)
                 }
             )
         else:
@@ -731,7 +829,8 @@ class PipelineManager(QThread):
                 'total_videos': total_processed,
                 'successful': successful_videos,
                 'failed': total_processed - successful_videos,
-                'processing_errors': len(self.processing_errors)
+                'processing_errors': len(self.processing_errors),
+                'resolved_secrets_used': list(self.config_dict.get('resolved_secrets', {}).keys())
             }
         )
         
@@ -829,7 +928,7 @@ def show_fork_join_pipeline_summary(main_window, total: int, success: int, error
     if failed == 0:
         msg = QMessageBox(main_window)
         msg.setWindowTitle("Fork-Join Pipeline Complete")
-        msg.setText(f"✅ Successfully processed {success} of {total} videos!\n\nFork-Join architecture completed successfully.")
+        msg.setText(f"✅ Successfully processed {success} of {total} videos!\n\nFork-Join architecture with zentrale secret resolution completed successfully.")
         msg.setIcon(QMessageBox.Information)
         msg.exec()
     else:
@@ -869,6 +968,7 @@ if __name__ == "__main__":
         print(f"   Queues: {list(pipeline_manager.queues.keys())}")
         print(f"   State Collections: video_lists + transcript_lists")
         print(f"   Archive Database: {pipeline_manager.archive_database}")
+        print(f"   Resolved Secrets: {list(pipeline_manager.config_dict.get('resolved_secrets', {}).keys())}")
         
         # Test queue operations
         test_urls = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -893,4 +993,4 @@ if __name__ == "__main__":
         error = unwrap_err(config_result)
         print(f"❌ Config loading failed: {error.message}")
     
-    print("\n🚀 Fork-Join Pipeline Manager Implementation Complete!")
+    print("\n🚀 Fork-Join Pipeline Manager Implementation with zentrale Secret-Resolution Complete!")

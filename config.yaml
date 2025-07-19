@@ -1,8 +1,17 @@
+llm_processing:
+  max_tokens: 4000
+  model: gpt-4
+  provider: openai
+  retry_attempts: 5
+  retry_delay: 5
+  system_prompt_file: prompts/transcript_processing.md
+  temperature: 0.1
+  timeout: 300
 ollama:
   host: http://localhost:11434
   max_tokens: 4000
-  model: gemma3:4b
-  temperature: 0.2
+  model: gemma2
+  temperature: 0.1
   timeout: 300
 processing:
   audio_format: mp3
@@ -31,19 +40,35 @@ scoring:
   min_confidence: 0.6
   threshold: 0.7
 secrets:
+  anthropic_service: Anthropic_API_Key
+  anthropic_username: api_key
+  google_service: Google_API_Key
+  google_username: api_key
   nextcloud_service: NextcloudPW
   nextcloud_username: steefen
+  openai_service: OpenAI_API_Key
+  openai_username: api_key
   trilium_service: TrilliumToken
   trilium_username: token
 storage:
+  nextcloud_base_url: https://nextcloud.example.com/remote.php/dav/files/username/
   nextcloud_path: /YouTube-Archive
-  nextcloud_base_url: https://nextcloud.organiccircuitlab.com/remote.php/dav/files/steefen
   sqlite_path: data/youtube_analyzer.db
   trilium_parent_note: YouTube Knowledge Base
+trilium_upload:
+  auto_tags:
+  - youtube
+  - transcript
+  - llm-processed
+  base_url: https://trilium.example.com
+  enabled: true
+  include_metadata: true
+  note_template: transcript
+  parent_note_id: YouTube Transcripts
+  timeout: 60
 whisper:
   compute_type: float16
   device: cuda
   enabled: true
   language: null
   model: large-v3
-    

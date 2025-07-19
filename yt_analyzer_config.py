@@ -431,54 +431,75 @@ class SecureConfigManager:
         """Validiert dass alle benötigten Secrets in KeePassXC verfügbar sind"""
         if not self.config:
             return Err(CoreError("Config not loaded"))
-        
-        secrets_to_test = [
-            # Existing secrets
+    
+        # CORE SECRETS (immer required)
+        core_secrets_to_test = [
             (self.config.secrets.trilium_service, self.config.secrets.trilium_username, "Trilium"),
             (self.config.secrets.nextcloud_service, self.config.secrets.nextcloud_username, "Nextcloud"),
-            
-            # NEW: LLM API secrets (test only enabled provider)
-            (self.config.secrets.openai_service, self.config.secrets.openai_username, "OpenAI"),
-            (self.config.secrets.anthropic_service, self.config.secrets.anthropic_username, "Anthropic"),
-            (self.config.secrets.google_service, self.config.secrets.google_username, "Google")
         ]
-        
+    
         failed_secrets = []
-        
-        for service, username, name in secrets_to_test:
+    
+        # Test core secrets
+        for service, username, name in core_secrets_to_test:
             test_result = self.secret_manager.test_secret_access(service, username)
             if isinstance(test_result, Err):
                 failed_secrets.append(f"{name}: {service}/{username}")
                 self.logger.warning(f"{name} secret not accessible: {test_result.error.message}")
-        
-        # Only require the active LLM provider secret
+    
+        # LLM PROVIDER SECRET (nur aktiven Provider testen)
         active_provider = self.config.llm_processing.provider
-        required_provider_secrets = {
-            "openai": "OpenAI",
-            "anthropic": "Anthropic", 
-            "google": "Google"
+        provider_secret_mapping = {
+            "openai": (self.config.secrets.openai_service, self.config.secrets.openai_username, "OpenAI"),
+            "anthropic": (self.config.secrets.anthropic_service, self.config.secrets.anthropic_username, "Anthropic"),
+            "google": (self.config.secrets.google_service, self.config.secrets.google_username, "Google")
         }
-        
-        if active_provider in required_provider_secrets:
-            provider_name = required_provider_secrets[active_provider]
-            if any(provider_name in secret for secret in failed_secrets):
-                context = ErrorContext.create(
-                    "validate_secrets",
-                    input_data={'active_provider': active_provider, 'failed_secrets': failed_secrets},
-                    suggestions=[
-                        f"Configure {provider_name} API key in KeePassXC",
-                        f"keyring set {getattr(self.config.secrets, f'{active_provider}_service')} {getattr(self.config.secrets, f'{active_provider}_username')}",
-                        "Or change LLM provider in config"
-                    ]
-                )
-                return Err(CoreError(f"Required LLM provider secret not accessible: {provider_name}", context))
-        
-        # Warn about missing optional secrets but don't fail
-        if failed_secrets:
-            self.logger.warning(f"Some optional secrets not accessible: {failed_secrets}")
-        
-        self.logger.info("All required secrets accessible in KeePassXC")
+    
+        if active_provider in provider_secret_mapping:
+            service, username, name = provider_secret_mapping[active_provider]
+            test_result = self.secret_manager.test_secret_access(service, username)
+            if isinstance(test_result, Err):
+                failed_secrets.append(f"{name}: {service}/{username}")
+                self.logger.error(f"Active LLM provider secret not accessible: {test_result.error.message}")
+    
+        # Core secrets failure = hard error
+        core_failures = [s for s in failed_secrets if any(core in s for core in ["Trilium", "Nextcloud"])]
+        if core_failures:
+            context = ErrorContext.create(
+                "validate_core_secrets",
+                input_data={'failed_secrets': core_failures},
+                suggestions=[
+                    "Configure core secrets in KeePassXC",
+                    "keyring set <service> <username>",
+                    "Ensure KeePassXC is running and unlocked"
+                ]
+            )
+            return Err(CoreError(f"Core secrets not accessible: {core_failures}", context))
+    
+        # Active LLM provider failure = hard error  
+        llm_failures = [s for s in failed_secrets if any(provider in s for provider in ["OpenAI", "Anthropic", "Google"])]
+        if llm_failures:
+            context = ErrorContext.create(
+                "validate_llm_secrets",
+                input_data={'active_provider': active_provider, 'failed_secrets': llm_failures},
+                suggestions=[
+                    f"Configure {active_provider.title()} API key in KeePassXC",
+                    f"keyring set {provider_secret_mapping[active_provider][0]} {provider_secret_mapping[active_provider][1]}",
+                    "Or change LLM provider in config"
+                ]
+            )
+            return Err(CoreError(f"Active LLM provider secret not accessible: {active_provider}", context))
+    
+        self.logger.info(
+            "All required secrets accessible",
+            extra={
+                'core_secrets': ['Trilium', 'Nextcloud'],
+                'active_llm_provider': active_provider,
+                'total_secrets_checked': len(core_secrets_to_test) + 1
+            }
+        )
         return Ok(None)
+    
     
     # Enhanced secret getters
     def get_trilium_token(self) -> Result[str, CoreError]:
