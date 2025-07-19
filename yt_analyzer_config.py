@@ -1,13 +1,13 @@
 """
-YouTube Analyzer - Updated Configuration System
-Erweitert um nextcloud_base_url für WebDAV4-Integration
+YouTube Analyzer - Enhanced Configuration System
+Erweitert um LLM Processing und Trilium Upload für Fork-Join Architecture
 """
 
 from __future__ import annotations
 import yaml
 import keyring
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Literal
 from dataclasses import dataclass, field
 from pydantic import BaseModel, Field, validator
 import json
@@ -17,11 +17,11 @@ from core_types import Result, Ok, Err, CoreError, ErrorContext
 from logging_plus import get_logger, log_feature
 
 # =============================================================================
-# SECURE SECRET MANAGEMENT (unchanged)
+# SECURE SECRET MANAGEMENT (Enhanced)
 # =============================================================================
 
 class SecretManager:
-    """Secure Secret Management via KeePassXC D-Bus"""
+    """Secure Secret Management via KeePassXC D-Bus - Enhanced for LLM APIs"""
     
     def __init__(self):
         self.logger = get_logger("SecretManager")
@@ -46,8 +46,8 @@ class SecretManager:
         Holt Secret aus System-Keyring
         
         Args:
-            service_name: Service-Name (z.B. "TrilliumToken")
-            username: Username für Service (z.B. "token")
+            service_name: Service-Name (z.B. "OpenAI_API_Key")
+            username: Username für Service (z.B. "api_key")
             
         Returns:
             Ok(str): Secret-Wert
@@ -115,18 +115,27 @@ class SecretManager:
             return Err(CoreError(f"Secret access test failed: {e}", context))
 
 # =============================================================================
-# PYDANTIC CONFIG MODELS (Updated with Nextcloud Base URL)
+# ENHANCED PYDANTIC CONFIG MODELS
 # =============================================================================
 
 class SecretsConfig(BaseModel):
-    """Secret-Service-Konfiguration für Keyring-Zugriff"""
+    """Enhanced Secret-Service-Konfiguration für alle APIs"""
+    # Existing secrets
     trilium_service: str = Field(description="Keyring Service-Name für Trilium Token")
     trilium_username: str = Field(description="Keyring Username für Trilium Token")
     nextcloud_service: str = Field(description="Keyring Service-Name für Nextcloud Password")
     nextcloud_username: str = Field(description="Keyring Username für Nextcloud Password")
+    
+    # NEW: LLM API Secrets
+    openai_service: str = Field(description="Keyring Service-Name für OpenAI API Key")
+    openai_username: str = Field(description="Keyring Username für OpenAI API Key")
+    anthropic_service: str = Field(description="Keyring Service-Name für Anthropic API Key")
+    anthropic_username: str = Field(description="Keyring Username für Anthropic API Key")
+    google_service: str = Field(description="Keyring Service-Name für Google API Key")
+    google_username: str = Field(description="Keyring Username für Google API Key")
 
 class WhisperConfig(BaseModel):
-    """Whisper-Transkription-Konfiguration"""
+    """Whisper-Transkription-Konfiguration (unchanged)"""
     enabled: bool = Field(default=True, description="Whisper-Transkription aktivieren")
     model: str = Field(default="large-v3", description="Whisper Model")
     device: str = Field(default="cuda", description="Device (cuda/cpu)")
@@ -134,7 +143,7 @@ class WhisperConfig(BaseModel):
     compute_type: str = Field(default="float16", description="Compute Type für GPU")
 
 class AnalysisRule(BaseModel):
-    """Einzelne Analyse-Regel mit Konfiguration"""
+    """Einzelne Analyse-Regel mit Konfiguration (unchanged)"""
     file: str = Field(description="Pfad zur Prompt-Datei")
     weight: float = Field(ge=0.0, le=1.0, description="Gewichtung der Regel")
     enabled: bool = Field(default=True, description="Regel aktiviert")
@@ -163,7 +172,7 @@ class AnalysisRule(BaseModel):
             return Err(CoreError(f"Failed to load prompt: {e}", context))
 
 class RulesConfig(BaseModel):
-    """Konfiguration aller Analyse-Regeln"""
+    """Konfiguration aller Analyse-Regeln (unchanged)"""
     fachinhalt: AnalysisRule
     qualität: AnalysisRule  
     länge_tiefe: AnalysisRule
@@ -186,19 +195,19 @@ class RulesConfig(BaseModel):
         return v
 
 class ScoringConfig(BaseModel):
-    """Bewertungs- und Entscheidungs-Konfiguration"""
+    """Bewertungs- und Entscheidungs-Konfiguration (unchanged)"""
     threshold: float = Field(ge=0.0, le=1.0, description="Mindest-Score für Video Download")
     min_confidence: float = Field(ge=0.0, le=1.0, description="Mindest-Konfidenz der KI-Bewertung")
 
 class StorageConfig(BaseModel):
-    """UPDATED: Speicher-Pfad-Konfiguration mit Nextcloud Base URL"""
-    nextcloud_base_url: str = Field(description="Full WebDAV base URL für Nextcloud")  # ADDED
+    """Speicher-Pfad-Konfiguration (unchanged)"""
+    nextcloud_base_url: str = Field(description="Full WebDAV base URL für Nextcloud")
     nextcloud_path: str = Field(description="Upload-Pfad in Nextcloud")
     trilium_parent_note: str = Field(description="Parent Note in Trilium für YouTube-Inhalte")
     sqlite_path: str = Field(description="Pfad zur SQLite-Datenbank")
 
 class OllamaConfig(BaseModel):
-    """Ollama/LLM-Konfiguration"""
+    """Ollama/LLM-Konfiguration (unchanged)"""
     host: str = Field(default="http://localhost:11434", description="Ollama API Host")
     model: str = Field(default="gemma2", description="LLM Model Name")
     temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="Model Temperature")
@@ -206,27 +215,140 @@ class OllamaConfig(BaseModel):
     timeout: int = Field(default=300, gt=0, description="Request Timeout (seconds)")
 
 class ProcessingConfig(BaseModel):
-    """Video-Processing-Konfiguration"""
+    """Video-Processing-Konfiguration (unchanged)"""
     temp_folder: Path = Field(default=Path("/tmp/youtube_analyzer"), description="Temp-Ordner für Downloads")
     max_video_length: int = Field(default=7200, gt=0, description="Max Video-Länge in Sekunden")
     audio_format: str = Field(default="mp3", description="Audio-Format")
     video_format: str = Field(default="mp4", description="Video-Format")
     cleanup_temp_files: bool = Field(default=True, description="Temp-Files löschen")
 
+# =============================================================================
+# NEW: LLM PROCESSING CONFIGURATION
+# =============================================================================
+
+class LLMProcessingConfig(BaseModel):
+    """Konfiguration für LLM-basierte Transkript-Verarbeitung"""
+    provider: Literal["openai", "anthropic", "google"] = Field(
+        default="openai", 
+        description="LLM Provider auswählen"
+    )
+    model: str = Field(
+        default="gpt-4", 
+        description="Provider-spezifisches Model (gpt-4, claude-3-sonnet, gemini-pro)"
+    )
+    system_prompt_file: str = Field(
+        default="prompts/transcript_processing.md",
+        description="Pfad zur System-Prompt-Datei"
+    )
+    temperature: float = Field(
+        default=0.1, 
+        ge=0.0, 
+        le=2.0, 
+        description="Model Temperature für Konsistenz"
+    )
+    max_tokens: int = Field(
+        default=4000, 
+        gt=0, 
+        description="Maximum Output Tokens"
+    )
+    retry_attempts: int = Field(
+        default=5, 
+        gt=0, 
+        description="Anzahl Retry-Versuche bei API-Fehlern"
+    )
+    retry_delay: int = Field(
+        default=5, 
+        gt=0, 
+        description="Sekunden zwischen Retry-Versuchen"
+    )
+    timeout: int = Field(
+        default=300, 
+        gt=0, 
+        description="Request Timeout in Sekunden"
+    )
+    
+    def get_provider_model_mapping(self) -> Dict[str, List[str]]:
+        """Mapping verfügbarer Models pro Provider"""
+        return {
+            "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"],
+            "anthropic": ["claude-3-sonnet-20240229", "claude-3-haiku-20240307", "claude-3-opus-20240229"],
+            "google": ["gemini-pro", "gemini-pro-vision"]
+        }
+    
+    def validate_provider_model_combination(self) -> Result[None, CoreError]:
+        """Validiert ob Model für Provider verfügbar ist"""
+        mapping = self.get_provider_model_mapping()
+        available_models = mapping.get(self.provider, [])
+        
+        if self.model not in available_models:
+            context = ErrorContext.create(
+                "validate_provider_model",
+                input_data={'provider': self.provider, 'model': self.model},
+                suggestions=[
+                    f"Available models for {self.provider}: {', '.join(available_models)}",
+                    "Update model in config.yaml",
+                    "Or change provider"
+                ]
+            )
+            return Err(CoreError(f"Model '{self.model}' not available for provider '{self.provider}'", context))
+        
+        return Ok(None)
+
+# =============================================================================
+# NEW: TRILIUM UPLOAD CONFIGURATION
+# =============================================================================
+
+class TrilliumUploadConfig(BaseModel):
+    """Konfiguration für Trilium-Upload von bearbeiteten Transkripten"""
+    enabled: bool = Field(default=True, description="Trilium Upload aktivieren")
+    base_url: str = Field(
+        default="https://trilium.example.com", 
+        description="Trilium Base URL"
+    )
+    parent_note_id: str = Field(
+        default="YouTube Transcripts", 
+        description="Parent Note ID oder Titel in Trilium"
+    )
+    note_template: str = Field(
+        default="transcript", 
+        description="Template für Note-Erstellung"
+    )
+    auto_tags: List[str] = Field(
+        default_factory=lambda: ["youtube", "transcript", "llm-processed"],
+        description="Automatische Tags für alle Notes"
+    )
+    include_metadata: bool = Field(
+        default=True, 
+        description="LLM-Metadaten in Note einbetten"
+    )
+    timeout: int = Field(
+        default=60, 
+        gt=0, 
+        description="Upload Timeout in Sekunden"
+    )
+
+# =============================================================================
+# ENHANCED MAIN APP CONFIG
+# =============================================================================
+
 class AppConfig(BaseModel):
-    """Haupt-Konfiguration mit Secure Secrets"""
-    # Secret Management
+    """Haupt-Konfiguration mit Fork-Join-Features"""
+    # Secret Management (Enhanced)
     secrets: SecretsConfig
     
-    # Processing Components
+    # Processing Components (Enhanced)
     whisper: WhisperConfig = Field(default_factory=WhisperConfig)
     rules: RulesConfig
     scoring: ScoringConfig
-    storage: StorageConfig  # UPDATED with nextcloud_base_url
+    storage: StorageConfig
     
-    # Technical Components
+    # Technical Components (Enhanced)
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
+    
+    # NEW: Fork-Join Components
+    llm_processing: LLMProcessingConfig = Field(default_factory=LLMProcessingConfig)
+    trilium_upload: TrilliumUploadConfig = Field(default_factory=TrilliumUploadConfig)
     
     @validator('rules')
     def validate_total_weights(cls, v):
@@ -235,13 +357,21 @@ class AppConfig(BaseModel):
         if total_weight > 1.0:
             raise ValueError(f"Total weight of enabled rules ({total_weight}) exceeds 1.0")
         return v
+    
+    @validator('llm_processing')
+    def validate_llm_config(cls, v):
+        """Validiert LLM-Provider-Model-Kombination"""
+        validation_result = v.validate_provider_model_combination()
+        if isinstance(validation_result, Err):
+            raise ValueError(f"LLM config validation failed: {validation_result.error.message}")
+        return v
 
 # =============================================================================
-# SECURE CONFIG MANAGER (unchanged logic, updated example config)
+# SECURE CONFIG MANAGER (Enhanced)
 # =============================================================================
 
 class SecureConfigManager:
-    """Configuration Manager mit Secure Secret Integration"""
+    """Configuration Manager mit Enhanced Secret Integration für Fork-Join"""
     
     def __init__(self, config_path: Path = Path("config.yaml")):
         self.config_path = config_path
@@ -250,7 +380,7 @@ class SecureConfigManager:
         self.logger = get_logger("SecureConfigManager")
     
     def load_config(self) -> Result[AppConfig, CoreError]:
-        """Lädt Konfiguration mit Secret-Validation"""
+        """Lädt Konfiguration mit Enhanced Secret-Validation"""
         try:
             # Load YAML Config first
             if not self.config_path.exists():
@@ -260,22 +390,25 @@ class SecureConfigManager:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 config_data = yaml.safe_load(f)
             
-            # Parse Config
+            # Parse Config with Pydantic validation
             self.config = AppConfig(**config_data)
             
-            # Validate Secrets Exist in KeePassXC
-            secrets_result = self._validate_secrets()
+            # Validate all secrets exist in KeePassXC
+            secrets_result = self._validate_all_secrets()
             if isinstance(secrets_result, Err):
                 return secrets_result
             
             self.logger.info(
-                f"Secure configuration loaded successfully",
+                f"Enhanced configuration loaded successfully",
                 extra={
                     'config_path': str(self.config_path),
                     'enabled_rules': list(self.config.rules.get_enabled_rules().keys()),
                     'total_rule_weight': self.config.rules.get_total_weight(),
                     'whisper_enabled': self.config.whisper.enabled,
-                    'nextcloud_base_url': self.config.storage.nextcloud_base_url  # ADDED logging
+                    'llm_provider': self.config.llm_processing.provider,
+                    'llm_model': self.config.llm_processing.model,
+                    'trilium_enabled': self.config.trilium_upload.enabled,
+                    'nextcloud_base_url': self.config.storage.nextcloud_base_url
                 }
             )
             
@@ -283,42 +416,71 @@ class SecureConfigManager:
             
         except Exception as e:
             context = ErrorContext.create(
-                "load_secure_config",
+                "load_enhanced_config",
                 input_data={'config_path': str(self.config_path)},
                 suggestions=[
                     "Check YAML syntax",
                     "Verify all required sections exist",
-                    "Run keyring setup for secrets"
+                    "Run keyring setup for LLM API keys",
+                    "Check LLM provider-model combination"
                 ]
             )
-            return Err(CoreError(f"Failed to load secure config: {e}", context))
+            return Err(CoreError(f"Failed to load enhanced config: {e}", context))
     
-    def _validate_secrets(self) -> Result[None, CoreError]:
+    def _validate_all_secrets(self) -> Result[None, CoreError]:
         """Validiert dass alle benötigten Secrets in KeePassXC verfügbar sind"""
         if not self.config:
             return Err(CoreError("Config not loaded"))
         
-        # Test Trilium Secret Access
-        trilium_result = self.secret_manager.test_secret_access(
-            self.config.secrets.trilium_service,
-            self.config.secrets.trilium_username
-        )
-        if isinstance(trilium_result, Err):
-            self.logger.error(f"Trilium secret not accessible: {trilium_result.error.message}")
-            return trilium_result
+        secrets_to_test = [
+            # Existing secrets
+            (self.config.secrets.trilium_service, self.config.secrets.trilium_username, "Trilium"),
+            (self.config.secrets.nextcloud_service, self.config.secrets.nextcloud_username, "Nextcloud"),
+            
+            # NEW: LLM API secrets (test only enabled provider)
+            (self.config.secrets.openai_service, self.config.secrets.openai_username, "OpenAI"),
+            (self.config.secrets.anthropic_service, self.config.secrets.anthropic_username, "Anthropic"),
+            (self.config.secrets.google_service, self.config.secrets.google_username, "Google")
+        ]
         
-        # Test Nextcloud Secret Access
-        nextcloud_result = self.secret_manager.test_secret_access(
-            self.config.secrets.nextcloud_service,
-            self.config.secrets.nextcloud_username
-        )
-        if isinstance(nextcloud_result, Err):
-            self.logger.error(f"Nextcloud secret not accessible: {nextcloud_result.error.message}")
-            return nextcloud_result
+        failed_secrets = []
         
-        self.logger.info("All secrets accessible in KeePassXC")
+        for service, username, name in secrets_to_test:
+            test_result = self.secret_manager.test_secret_access(service, username)
+            if isinstance(test_result, Err):
+                failed_secrets.append(f"{name}: {service}/{username}")
+                self.logger.warning(f"{name} secret not accessible: {test_result.error.message}")
+        
+        # Only require the active LLM provider secret
+        active_provider = self.config.llm_processing.provider
+        required_provider_secrets = {
+            "openai": "OpenAI",
+            "anthropic": "Anthropic", 
+            "google": "Google"
+        }
+        
+        if active_provider in required_provider_secrets:
+            provider_name = required_provider_secrets[active_provider]
+            if any(provider_name in secret for secret in failed_secrets):
+                context = ErrorContext.create(
+                    "validate_secrets",
+                    input_data={'active_provider': active_provider, 'failed_secrets': failed_secrets},
+                    suggestions=[
+                        f"Configure {provider_name} API key in KeePassXC",
+                        f"keyring set {getattr(self.config.secrets, f'{active_provider}_service')} {getattr(self.config.secrets, f'{active_provider}_username')}",
+                        "Or change LLM provider in config"
+                    ]
+                )
+                return Err(CoreError(f"Required LLM provider secret not accessible: {provider_name}", context))
+        
+        # Warn about missing optional secrets but don't fail
+        if failed_secrets:
+            self.logger.warning(f"Some optional secrets not accessible: {failed_secrets}")
+        
+        self.logger.info("All required secrets accessible in KeePassXC")
         return Ok(None)
     
+    # Enhanced secret getters
     def get_trilium_token(self) -> Result[str, CoreError]:
         """Holt Trilium API Token aus Keyring"""
         if not self.config:
@@ -339,14 +501,66 @@ class SecureConfigManager:
             self.config.secrets.nextcloud_username
         )
     
+    # NEW: LLM API Key getters
+    def get_openai_api_key(self) -> Result[str, CoreError]:
+        """Holt OpenAI API Key aus Keyring"""
+        if not self.config:
+            return Err(CoreError("Config not loaded"))
+        
+        return self.secret_manager.get_secret(
+            self.config.secrets.openai_service,
+            self.config.secrets.openai_username
+        )
+    
+    def get_anthropic_api_key(self) -> Result[str, CoreError]:
+        """Holt Anthropic API Key aus Keyring"""
+        if not self.config:
+            return Err(CoreError("Config not loaded"))
+        
+        return self.secret_manager.get_secret(
+            self.config.secrets.anthropic_service,
+            self.config.secrets.anthropic_username
+        )
+    
+    def get_google_api_key(self) -> Result[str, CoreError]:
+        """Holt Google API Key aus Keyring"""
+        if not self.config:
+            return Err(CoreError("Config not loaded"))
+        
+        return self.secret_manager.get_secret(
+            self.config.secrets.google_service,
+            self.config.secrets.google_username
+        )
+    
+    def get_llm_api_key(self, provider: str) -> Result[str, CoreError]:
+        """Holt API Key für aktuellen LLM Provider"""
+        provider_methods = {
+            "openai": self.get_openai_api_key,
+            "anthropic": self.get_anthropic_api_key,
+            "google": self.get_google_api_key
+        }
+        
+        if provider not in provider_methods:
+            return Err(CoreError(f"Unknown LLM provider: {provider}"))
+        
+        return provider_methods[provider]()
+    
     def _generate_example_config(self) -> None:
-        """UPDATED: Generiert Beispiel-Konfiguration mit nextcloud_base_url"""
+        """Generiert Enhanced Beispiel-Konfiguration mit Fork-Join-Features"""
         example_config = {
             'secrets': {
+                # Existing secrets
                 'trilium_service': 'TrilliumToken',
                 'trilium_username': 'token',
                 'nextcloud_service': 'NextcloudPW',
-                'nextcloud_username': 'steefen'
+                'nextcloud_username': 'steefen',
+                # NEW: LLM API secrets
+                'openai_service': 'OpenAI_API_Key',
+                'openai_username': 'api_key',
+                'anthropic_service': 'Anthropic_API_Key',
+                'anthropic_username': 'api_key',
+                'google_service': 'Google_API_Key',
+                'google_username': 'api_key'
             },
             'whisper': {
                 'enabled': True,
@@ -382,7 +596,7 @@ class SecureConfigManager:
                 'min_confidence': 0.6
             },
             'storage': {
-                'nextcloud_base_url': 'https://nextcloud.example.com/remote.php/dav/files/username/',  # ADDED
+                'nextcloud_base_url': 'https://nextcloud.example.com/remote.php/dav/files/username/',
                 'nextcloud_path': '/YouTube-Archive',
                 'trilium_parent_note': 'YouTube Knowledge Base',
                 'sqlite_path': 'data/youtube_analyzer.db'
@@ -400,6 +614,27 @@ class SecureConfigManager:
                 'audio_format': 'mp3',
                 'video_format': 'mp4',
                 'cleanup_temp_files': True
+            },
+            # NEW: LLM Processing Configuration
+            'llm_processing': {
+                'provider': 'openai',
+                'model': 'gpt-4',
+                'system_prompt_file': 'prompts/transcript_processing.md',
+                'temperature': 0.1,
+                'max_tokens': 4000,
+                'retry_attempts': 5,
+                'retry_delay': 5,
+                'timeout': 300
+            },
+            # NEW: Trilium Upload Configuration
+            'trilium_upload': {
+                'enabled': True,
+                'base_url': 'https://trilium.example.com',
+                'parent_note_id': 'YouTube Transcripts',
+                'note_template': 'transcript',
+                'auto_tags': ['youtube', 'transcript', 'llm-processed'],
+                'include_metadata': True,
+                'timeout': 60
             }
         }
         
@@ -407,11 +642,11 @@ class SecureConfigManager:
             yaml.dump(example_config, f, default_flow_style=False, allow_unicode=True)
 
 # =============================================================================
-# ENHANCED RULE SYSTEM (unchanged)
+# ENHANCED RULE SYSTEM (unchanged but compatible)
 # =============================================================================
 
 class EnhancedRuleSystem:
-    """Rule System mit gewichteter Bewertung und flexibler Konfiguration"""
+    """Rule System mit gewichteter Bewertung (unchanged interface)"""
     
     def __init__(self, config: AppConfig, base_path: Path = Path(".")):
         self.config = config
@@ -442,191 +677,133 @@ class EnhancedRuleSystem:
         )
         
         return Ok(loaded_prompts)
+
+# =============================================================================
+# LLM PROMPT SYSTEM (NEW)
+# =============================================================================
+
+class LLMPromptSystem:
+    """System für LLM-Prompt-Management mit Caching"""
     
-    def generate_analysis_prompt(self, transcript: str) -> Result[str, CoreError]:
-        """Generiert gewichteten Analysis-Prompt"""
-        if not self.loaded_rules:
-            load_result = self.load_rule_prompts()
-            if isinstance(load_result, Err):
-                return load_result
+    def __init__(self, config: AppConfig, base_path: Path = Path(".")):
+        self.config = config
+        self.base_path = base_path
+        self.logger = get_logger("LLMPromptSystem")
+        self._cached_system_prompt: Optional[str] = None
+        self._cache_timestamp: Optional[float] = None
+        self.cache_ttl = 300  # 5 Minuten Cache
+    
+    def get_system_prompt(self) -> Result[str, CoreError]:
+        """Lädt System-Prompt mit Caching (analog zu Rules)"""
+        import time
+        current_time = time.time()
         
-        enabled_rules = self.config.rules.get_enabled_rules()
-        rules_section = []
-        
-        for rule_name, rule_content in self.loaded_rules.items():
-            rule_config = enabled_rules[rule_name]
+        # Check cache validity
+        if (self._cached_system_prompt and 
+            self._cache_timestamp and 
+            current_time - self._cache_timestamp < self.cache_ttl):
             
-            rules_section.append(f"""
-## Regel: {rule_name.upper()}
-**Gewichtung:** {rule_config.weight} ({rule_config.weight * 100:.1f}%)
-**Status:** {'✅ Aktiviert' if rule_config.enabled else '❌ Deaktiviert'}
-
-{rule_content}
-""")
+            self.logger.debug("Using cached LLM system prompt")
+            return Ok(self._cached_system_prompt)
         
-        prompt = f"""Du bist ein Experte für Content-Analyse. Analysiere den folgenden YouTube-Transkript basierend auf den gewichteten Regeln.
-
-# ANALYSE-REGELN (Gesamt-Gewichtung: {self.config.rules.get_total_weight()})
-{''.join(rules_section)}
-
-# TRANSKRIPT ZU ANALYSIEREN
-{transcript}
-
-# AUFGABE
-Analysiere den Transkript systematisch anhand jeder aktivierten Regel:
-
-1. **Regel-Bewertung** (pro Regel):
-   - Erfüllung: true/false
-   - Konfidenz: 0.0-1.0 (wie sicher bist du?)
-   - Score: 0.0-1.0 (Qualität der Erfüllung)
-   - Begründung: Kurze Erklärung
-
-2. **Gesamt-Bewertung**:
-   - Gewichteter Gesamtscore (basierend auf Regel-Gewichtungen)
-   - Gesamtkonfidenz (Durchschnitt aller Regel-Konfidenzen)
-   - Empfehlung: DOWNLOAD oder SKIP
-
-# OUTPUT-FORMAT
-Antworte ausschließlich mit folgendem JSON-Format:
-
-{{
-    "rules_analysis": [
-        {{
-            "rule_name": "{rule_name}",
-            "fulfilled": true,
-            "confidence": 0.85,
-            "score": 0.90,
-            "reasoning": "Begründung..."
-        }}
-    ],
-    "overall_score": 0.82,
-    "overall_confidence": 0.88,
-    "recommendation": "DOWNLOAD",
-    "summary": "Kurze Zusammenfassung der Analyse"
-}}
-
-# SCORING-KRITERIEN
-- Threshold für DOWNLOAD: {self.config.scoring.threshold}
-- Minimum Confidence: {self.config.scoring.min_confidence}
-- Gewichtete Berechnung: Σ(regel_score × regel_weight)
-"""
-        
-        return Ok(prompt)
+        # Load fresh prompt
+        try:
+            prompt_path = self.base_path / self.config.llm_processing.system_prompt_file
+            
+            if not prompt_path.exists():
+                context = ErrorContext.create(
+                    "load_llm_system_prompt",
+                    input_data={'prompt_path': str(prompt_path)},
+                    suggestions=[
+                        "Create system prompt file",
+                        f"Expected location: {prompt_path}",
+                        "Check llm_processing.system_prompt_file in config"
+                    ]
+                )
+                return Err(CoreError(f"LLM system prompt file not found: {prompt_path}", context))
+            
+            prompt_content = prompt_path.read_text(encoding='utf-8')
+            
+            # Cache the result
+            self._cached_system_prompt = prompt_content
+            self._cache_timestamp = current_time
+            
+            self.logger.info(
+                f"LLM system prompt loaded and cached",
+                extra={
+                    'prompt_file': str(prompt_path),
+                    'prompt_length': len(prompt_content),
+                    'cache_ttl': self.cache_ttl
+                }
+            )
+            
+            return Ok(prompt_content)
+            
+        except Exception as e:
+            context = ErrorContext.create(
+                "load_llm_system_prompt",
+                input_data={'prompt_file': self.config.llm_processing.system_prompt_file},
+                suggestions=["Check file permissions", "Verify file encoding"]
+            )
+            return Err(CoreError(f"Failed to load LLM system prompt: {e}", context))
 
 # =============================================================================
-# BEISPIEL-SETUP & USAGE
+# EXAMPLE USAGE & TESTING
 # =============================================================================
-
-def generate_example_prompts(prompts_dir: Path) -> None:
-    """Generiert Beispiel-Prompt-Dateien"""
-    prompts_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Fachinhalt Prompt
-    (prompts_dir / "fachinhalt.md").write_text("""
-# Fachinhalt-Bewertung
-
-Bewerte die **fachliche Korrektheit und Tiefe** des Inhalts:
-
-## Kriterien:
-1. **Technische Korrektheit**: Sind die Fakten richtig?
-2. **Fachliche Tiefe**: Wird das Thema umfassend behandelt?
-3. **Aktualität**: Sind die Informationen aktuell?
-4. **Quellenqualität**: Werden seriöse Quellen referenziert?
-
-## Bewertung:
-- **1.0**: Exzellenter Fachinhalt, keine Fehler erkennbar
-- **0.8**: Guter Fachinhalt mit kleinen Ungenauigkeiten
-- **0.6**: Okay, aber oberflächlich oder einzelne Fehler
-- **0.4**: Schwache fachliche Basis
-- **0.2**: Viele Fehler oder sehr oberflächlich
-- **0.0**: Fachlich inkorrekt oder irreführend
-""", encoding='utf-8')
-    
-    # Qualität Prompt
-    (prompts_dir / "qualität.md").write_text("""
-# Qualitäts-Bewertung
-
-Bewerte die **Produktions- und Inhaltsqualität**:
-
-## Kriterien:
-1. **Struktur**: Klarer Aufbau und logische Gliederung
-2. **Verständlichkeit**: Gut erklärt und nachvollziehbar
-3. **Audio-Qualität**: Deutliche Sprache, wenig Störgeräusche
-4. **Professionalität**: Vorbereitung und Präsentation
-
-## Bewertung:
-- **1.0**: Professionelle, hochwertige Produktion
-- **0.8**: Gute Qualität mit kleinen Schwächen
-- **0.6**: Durchschnittliche Qualität
-- **0.4**: Niedrige Qualität, aber verwendbar
-- **0.2**: Schlechte Qualität
-- **0.0**: Unbrauchbar schlecht
-""", encoding='utf-8')
-    
-    # Länge/Tiefe Prompt
-    (prompts_dir / "länge_tiefe.md").write_text("""
-# Länge/Tiefe-Bewertung
-
-Bewerte das **Verhältnis von Videolänge zu Informationsdichte**:
-
-## Kriterien:
-1. **Informationsdichte**: Viel Inhalt pro Zeiteinheit
-2. **Redundanz**: Wenig Wiederholungen oder Füllwörter
-3. **Fokus**: Bleibt beim Thema, wenig Abschweifen
-4. **Effizienz**: Kompakte, präzise Vermittlung
-
-## Bewertung:
-- **1.0**: Perfekte Balance, sehr informationsdicht
-- **0.8**: Gute Informationsdichte
-- **0.6**: Akzeptables Verhältnis
-- **0.4**: Etwas langatmig oder oberflächlich
-- **0.2**: Schlecht strukturiert, viel Füllmaterial
-- **0.0**: Zeitverschwendung, kaum Inhalt
-""", encoding='utf-8')
-    
-    # Relevanz Prompt
-    (prompts_dir / "relevanz.md").write_text("""
-# Relevanz-Bewertung
-
-Bewerte die **Relevanz und den Nutzen** des Inhalts:
-
-## Kriterien:
-1. **Praktischer Nutzen**: Anwendbare Erkenntnisse
-2. **Zeitlose Relevanz**: Nicht nur kurzfristig interessant
-3. **Zielgruppen-Fit**: Passt zu meinen Interessen
-4. **Lernwert**: Erweitert Wissen oder Fähigkeiten
-
-## Bewertung:
-- **1.0**: Extrem relevant und nützlich
-- **0.8**: Sehr relevant
-- **0.6**: Interessant und brauchbar
-- **0.4**: Begrenzte Relevanz
-- **0.2**: Kaum relevant
-- **0.0**: Irrelevant oder unnütz
-""", encoding='utf-8')
 
 if __name__ == "__main__":
     from logging_plus import setup_logging
     
     # Setup
-    setup_logging("secure_config_demo", "DEBUG")
+    setup_logging("enhanced_config_demo", "DEBUG")
     
-    # Generiere Beispiel-Config
-    config_manager = SecureConfigManager(Path("updated_config.yaml"))
+    # Test Enhanced Config
+    config_manager = SecureConfigManager(Path("enhanced_config.yaml"))
     
-    # Generiere Beispiel-Prompts
-    prompts_dir = Path("prompts")
-    generate_example_prompts(prompts_dir)
+    # Generate example config
+    if not Path("enhanced_config.yaml").exists():
+        config_manager._generate_example_config()
+        print("📝 Enhanced configuration file generated: enhanced_config.yaml")
     
-    print("🚀 Updated Configuration System Setup Complete!")
-    print("==============================================")
-    print("Generated files:")
-    print("- updated_config.yaml (UPDATED with nextcloud_base_url)")
-    print("- prompts/*.md (example rule prompts)")
-    print("")
-    print("UPDATED Config includes:")
-    print("- nextcloud_base_url: Full WebDAV endpoint URL")
-    print("- nextcloud_path: Upload path within Nextcloud")
-    print("")
-    print("Example nextcloud_base_url:")
-    print("https://nextcloud.example.com/remote.php/dav/files/username/")
+    # Load and test config
+    config_result = config_manager.load_config()
+    
+    if isinstance(config_result, Ok):
+        config = config_result.value
+        
+        print("✅ Enhanced configuration loaded successfully!")
+        print(f"   LLM Provider: {config.llm_processing.provider}")
+        print(f"   LLM Model: {config.llm_processing.model}")
+        print(f"   Trilium Enabled: {config.trilium_upload.enabled}")
+        print(f"   Enabled Rules: {list(config.rules.get_enabled_rules().keys())}")
+        
+        # Test LLM prompt loading
+        prompt_system = LLMPromptSystem(config)
+        prompt_result = prompt_system.get_system_prompt()
+        
+        if isinstance(prompt_result, Ok):
+            prompt = prompt_result.value
+            print(f"✅ LLM system prompt loaded: {len(prompt)} characters")
+        else:
+            print(f"⚠️ LLM system prompt loading failed: {prompt_result.error.message}")
+        
+        # Test secret access for active provider
+        api_key_result = config_manager.get_llm_api_key(config.llm_processing.provider)
+        
+        if isinstance(api_key_result, Ok):
+            api_key = api_key_result.value
+            print(f"✅ {config.llm_processing.provider.title()} API key accessible: {len(api_key)} characters")
+        else:
+            print(f"⚠️ {config.llm_processing.provider.title()} API key not accessible: {api_key_result.error.message}")
+    
+    else:
+        print(f"❌ Configuration loading failed: {config_result.error.message}")
+    
+    print("\n🚀 Enhanced Configuration System Ready!")
+    print("================================")
+    print("New Features:")
+    print("- LLM Processing Configuration (OpenAI, Anthropic, Google)")
+    print("- Trilium Upload Configuration") 
+    print("- Enhanced Secret Management")
+    print("- System Prompt Loading with Caching")
+    print("- Provider-Model Validation")

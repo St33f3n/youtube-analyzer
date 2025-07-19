@@ -1,13 +1,13 @@
 """
-YouTube Analyzer - GUI-Compatible Pipeline Manager
-Mit einmaliger Secret-Resolution beim Start für Thread-Safety
+YouTube Analyzer - Enhanced Fork-Join Pipeline Manager
+Vollständige Fork-Join-Architektur mit State-Management und ArchivObject-Integration
 """
 
 from __future__ import annotations
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Union
 from dataclasses import dataclass, field
 from enum import Enum
 import threading
@@ -17,23 +17,24 @@ from PySide6.QtWidgets import QMessageBox
 
 # Import our core libraries  
 from core_types import Result, Ok, Err, is_ok, unwrap_ok, unwrap_err, CoreError
-from yt_analyzer_core import ProcessObject, ProcessingQueue, ArchiveDatabase
+from yt_analyzer_core import ProcessObject, TranskriptObject, ArchivObject, ProcessingQueue, ArchiveDatabase
 from logging_plus import get_logger
-from yt_analyzer_config import AppConfig, SecureConfigManager
+from yt_analyzer_config import AppConfig
 from yt_url_processor import process_urls_to_objects
 from yt_transcription_worker import transcribe_process_object
 from yt_audio_downloader import download_audio_for_process_object
 from yt_rulechain import analyze_process_object
 from yt_video_downloader import download_video_for_process_object
-from yt_nextcloud_uploader import upload_to_nextcloud_for_process_object_dict
+from yt_nextcloud_uploader import upload_to_nextcloud_for_process_object
 
 # =============================================================================
-# GUI-COMPATIBLE PIPELINE STATUS (unchanged)
+# ENHANCED PIPELINE STATUS (Simple GUI-Compatible)
 # =============================================================================
 
 @dataclass
 class PipelineStatus:
-    """GUI-Compatible Pipeline Status (ohne metadata_queue)"""
+    """Simple Pipeline Status für GUI - minimale Erweiterung"""
+    # Existing queue counters (unchanged)
     audio_download_queue: int = 0
     transcription_queue: int = 0
     analysis_queue: int = 0
@@ -41,33 +42,40 @@ class PipelineStatus:
     upload_queue: int = 0
     processing_queue: int = 0
     
+    # NEW: Fork-Join queues (simple counts)
+    llm_processing_queue: int = 0
+    trilium_upload_queue: int = 0
+    
+    # Simple tracking (unchanged)
     total_queued: int = 0
     total_completed: int = 0
     total_failed: int = 0
     
+    # Current processing info (unchanged)
     current_stage: str = "Idle"
     current_video: Optional[str] = None
     
-    # Enhanced Features für GUI
+    # Basic features (unchanged)
     active_workers: List[str] = field(default_factory=list)
     pipeline_health: str = "healthy"
     estimated_completion: Optional[datetime] = None
     
     def is_active(self) -> bool:
-        """GUI-kompatible is_active ohne metadata_queue"""
+        """Activity check including new fork-join queues"""
         return (self.audio_download_queue + self.transcription_queue + 
                 self.analysis_queue + self.video_download_queue + 
-                self.upload_queue + self.processing_queue) > 0
+                self.upload_queue + self.processing_queue +
+                self.llm_processing_queue + self.trilium_upload_queue) > 0
 
 @dataclass
 class ProcessingError:
-    """Error-Information für End-Summary"""
+    """Error-Information für Pipeline-Summary"""
     video_title: str
     video_url: str
     stage: str
     error_message: str
     timestamp: datetime
-    process_object: Optional[ProcessObject] = None
+    object_type: str  # "ProcessObject" oder "TranskriptObject"
 
 class PipelineState(Enum):
     """Pipeline-Zustände"""
@@ -77,16 +85,16 @@ class PipelineState(Enum):
     FINISHED = "finished"
 
 # =============================================================================
-# ENHANCED BASE WORKER CLASS
+# ENHANCED BASE WORKER CLASS für Fork-Join
 # =============================================================================
 
 class BaseWorker(QThread):
-    """Enhanced Base Worker mit Current-Object-Tracking"""
+    """Enhanced Base Worker mit Fork-Join-Support"""
     
-    # Signals
-    object_processed = Signal(ProcessObject, str)
-    processing_error = Signal(ProcessObject, str)
-    stage_status_changed = Signal(str, int)
+    # Signals für Pipeline Manager
+    object_processed = Signal(object, str)  # Union[ProcessObject, TranskriptObject], next_stage
+    processing_error = Signal(object, str)  # Union[ProcessObject, TranskriptObject], error_message
+    stage_status_changed = Signal(str, int)  # stage_name, queue_size
     
     def __init__(self, stage_name: str, input_queue: ProcessingQueue, output_queue: Optional[ProcessingQueue] = None):
         super().__init__()
@@ -96,51 +104,56 @@ class BaseWorker(QThread):
         self.logger = get_logger(f"Worker-{stage_name}")
         self.should_stop = threading.Event()
         self.is_processing = False
-        self.current_object: Optional[ProcessObject] = None
+        self.current_object: Optional[Union[ProcessObject, TranskriptObject]] = None
     
     def run(self):
-        """Enhanced Worker-Loop mit Current-Object-Tracking"""
+        """Enhanced Worker-Loop mit Fork-Join-Object-Support"""
         self.logger.info(f"{self.stage_name} worker started")
         
         while not self.should_stop.is_set():
             try:
-                # Get ProcessObject from queue
+                # Get Object from queue (ProcessObject oder TranskriptObject)
                 obj_result = self.input_queue.get(timeout=1.0)
                 
                 if isinstance(obj_result, Err):
                     continue  # Queue empty, try again
                 
-                process_obj = unwrap_ok(obj_result)
+                obj = unwrap_ok(obj_result)
                 self.is_processing = True
-                self.current_object = process_obj
+                self.current_object = obj
                 
                 # Update status
                 self.stage_status_changed.emit(self.stage_name, self.input_queue.size())
                 
                 # Process object
-                process_result = self.process_object(process_obj)
+                process_result = self.process_object(obj)
                 
                 if isinstance(process_result, Ok):
                     processed_obj = unwrap_ok(process_result)
                     
                     # Handle routing decision
-                    next_stage_info = self.get_routing_decision(processed_obj)
+                    routing_info = self.get_routing_decision(processed_obj)
                     
-                    if next_stage_info["route_to_output"]:
+                    if routing_info["route_to_output"]:
                         if self.output_queue:
                             put_result = self.output_queue.put(processed_obj)
                             if isinstance(put_result, Ok):
-                                self.object_processed.emit(processed_obj, next_stage_info["next_stage"])
+                                self.object_processed.emit(processed_obj, routing_info["next_stage"])
                             else:
-                                self.processing_error.emit(processed_obj, f"Queue overflow")
+                                self.processing_error.emit(processed_obj, f"Queue overflow: {unwrap_err(put_result).message}")
                         else:
-                            self.object_processed.emit(processed_obj, "completed")
+                            # End of stream - signal completion
+                            self.object_processed.emit(processed_obj, "stream_completed")
                     else:
-                        self.object_processed.emit(processed_obj, "archive")
+                        # Object rejected (e.g., analysis failed)
+                        self.object_processed.emit(processed_obj, routing_info["next_stage"])
                 else:
                     error = unwrap_err(process_result)
-                    process_obj.add_error(f"{self.stage_name}: {error.message}")
-                    self.processing_error.emit(process_obj, error.message)
+                    if hasattr(obj, 'add_error'):  # ProcessObject
+                        obj.add_error(f"{self.stage_name}: {error.message}")
+                    else:  # TranskriptObject
+                        obj.error_message = f"{self.stage_name}: {error.message}"
+                    self.processing_error.emit(obj, error.message)
                 
                 self.input_queue.task_done()
                 self.current_object = None
@@ -154,11 +167,11 @@ class BaseWorker(QThread):
         
         self.logger.info(f"{self.stage_name} worker stopped")
     
-    def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
+    def process_object(self, obj: Union[ProcessObject, TranskriptObject]) -> Result[Union[ProcessObject, TranskriptObject], CoreError]:
         """Override in subclasses"""
         raise NotImplementedError("Subclasses must implement process_object")
     
-    def get_routing_decision(self, obj: ProcessObject) -> Dict[str, Any]:
+    def get_routing_decision(self, obj: Union[ProcessObject, TranskriptObject]) -> Dict[str, Any]:
         """Override für conditional routing"""
         return {
             "route_to_output": True,
@@ -176,11 +189,11 @@ class BaseWorker(QThread):
             self.wait(5000)
 
 # =============================================================================
-# WORKER IMPLEMENTATIONS - NUR Upload Worker geändert!
+# EXISTING WORKER IMPLEMENTATIONS (Minimal Changes)
 # =============================================================================
 
 class AudioDownloadWorker(BaseWorker):
-    """Audio-Download Worker - UNVERÄNDERT (keine Secrets)"""
+    """Audio-Download Worker (unchanged)"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Audio Download", input_queue, output_queue)
@@ -196,7 +209,7 @@ class AudioDownloadWorker(BaseWorker):
         return "Transcription"
 
 class TranscriptionWorker(BaseWorker):
-    """Transcription Worker - UNVERÄNDERT (keine Secrets)"""
+    """Transcription Worker (unchanged)"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Transcription", input_queue, output_queue)
@@ -210,28 +223,55 @@ class TranscriptionWorker(BaseWorker):
         return "Analysis"
 
 class AnalysisWorker(BaseWorker):
-    """Analysis Worker - UNVERÄNDERT (keine Secrets)"""
+    """Analysis Worker - FORK POINT Implementation"""
     
-    def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
-        super().__init__("Analysis", input_queue, output_queue)
+    def __init__(self, input_queue: ProcessingQueue, config: AppConfig, pipeline_manager: 'PipelineManager'):
+        super().__init__("Analysis", input_queue, None)  # No single output queue
         self.config = config
+        self.pipeline_manager = pipeline_manager
     
     def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
         self.logger.info(f"Starting content analysis: {obj.titel}")
         return analyze_process_object(obj, self.config)
     
     def get_routing_decision(self, obj: ProcessObject) -> Dict[str, Any]:
-        """Conditional routing based on analysis result"""
+        """FORK LOGIC: Routes based on analysis result"""
         if obj.passed_analysis:
-            return {"route_to_output": True, "next_stage": "Video Download"}
+            # SUCCESSFUL ANALYSIS -> FORK into two streams
+            self.logger.info(f"Analysis passed - forking processing for: {obj.titel}")
+            
+            # Stream A: Video Download Queue
+            video_put_result = self.pipeline_manager.queues["video_download"].put(obj)
+            if isinstance(video_put_result, Err):
+                self.logger.error(f"Failed to queue for video download: {unwrap_err(video_put_result).message}")
+            
+            # Stream B: LLM Processing Queue (clone to TranskriptObject)
+            transcript_obj = TranskriptObject.from_process_object(obj)
+            llm_put_result = self.pipeline_manager.queues["llm_processing"].put(transcript_obj)
+            if isinstance(llm_put_result, Err):
+                self.logger.error(f"Failed to queue for LLM processing: {unwrap_err(llm_put_result).message}")
+            
+            return {"route_to_output": False, "next_stage": "forked"}
         else:
-            return {"route_to_output": False, "next_stage": "Archive"}
+            # FAILED ANALYSIS -> Direct to archive
+            self.logger.info(f"Analysis failed - archiving directly: {obj.titel}")
+            obj.video_stream_success = False
+            
+            # Create failed ArchivObject with no transcript processing
+            failed_transcript = TranskriptObject.from_process_object(obj)
+            failed_transcript.success = False
+            failed_transcript.error_message = "Analysis failed - no LLM processing"
+            
+            archive_obj = ArchivObject.from_process_and_transcript(obj, failed_transcript)
+            self.pipeline_manager.archive_final_object(archive_obj)
+            
+            return {"route_to_output": False, "next_stage": "archived_failed"}
     
     def get_next_stage_name(self) -> str:
-        return "Video Download"
+        return "Fork"
 
 class VideoDownloadWorker(BaseWorker):
-    """Video Download Worker - UNVERÄNDERT (keine Secrets)"""
+    """Video Download Worker - Stream A"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Video Download", input_queue, output_queue)
@@ -247,42 +287,84 @@ class VideoDownloadWorker(BaseWorker):
         return "Upload"
 
 class UploadWorker(BaseWorker):
-    """Upload Worker - EINZIGER mit Config-Dict Support (braucht Secrets)"""
+    """Upload Worker - Stream A Final"""
     
-    def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config_dict: dict):
-        super().__init__("Upload", input_queue, output_queue)
-        self.config_dict = config_dict  # ← Dict für Secrets
+    def __init__(self, input_queue: ProcessingQueue, config: AppConfig):
+        super().__init__("Upload", input_queue, None)  # No output queue - end of Stream A
+        self.config = config
     
     def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
         self.logger.info(f"Starting Nextcloud upload: {obj.titel}")
-        return upload_to_nextcloud_for_process_object_dict(obj, self.config_dict)
+        result = upload_to_nextcloud_for_process_object(obj, self.config)
+        
+        if isinstance(result, Ok):
+            processed_obj = unwrap_ok(result)
+            processed_obj.video_stream_success = True
+            return Ok(processed_obj)
+        else:
+            obj.video_stream_success = False
+            return result
     
     def get_next_stage_name(self) -> str:
-        return "Processing"
+        return "Stream A Completed"
 
-class ProcessingWorker(BaseWorker):
-    """Processing Worker - Mock (könnte Trilium-Secrets brauchen)"""
+# =============================================================================
+# NEW: LLM AND TRILIUM WORKERS (Stream B)
+# =============================================================================
+
+class LLMProcessingWorker(BaseWorker):
+    """LLM Processing Worker - Stream B (PLACEHOLDER)"""
     
-    def __init__(self, input_queue: ProcessingQueue, output_queue: Optional[ProcessingQueue], config_dict: dict):
-        super().__init__("Processing", input_queue, output_queue)
-        self.config_dict = config_dict  # ← Dict für potentielle Trilium-Secrets
+    def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
+        super().__init__("LLM Processing", input_queue, output_queue)
+        self.config = config
     
-    def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
-        time.sleep(0.5)  # Mock processing
-        obj.bearbeiteter_transkript = f"Bearbeitetes Transkript: {obj.transkript}"
-        obj.trilium_link = f"trilium://note/{obj.get_unique_key()}"
-        obj.update_stage("completed")
+    def process_object(self, obj: TranskriptObject) -> Result[TranskriptObject, CoreError]:
+        self.logger.info(f"Starting LLM processing: {obj.titel}")
+        
+        # PLACEHOLDER: Mock LLM processing
+        time.sleep(2.0)  # Simulate LLM call
+        
+        obj.bearbeiteter_transkript = f"[LLM-PROCESSED] {obj.transkript[:200]}..."
+        obj.model = self.config.llm_processing.model
+        obj.tokens = 150
+        obj.cost = 0.003
+        obj.processing_time = 2.0
+        obj.success = True
+        obj.update_stage("llm_processing_completed")
+        
         return Ok(obj)
     
     def get_next_stage_name(self) -> str:
-        return "completed"
+        return "Trilium Upload"
+
+class TrilliumUploadWorker(BaseWorker):
+    """Trilium Upload Worker - Stream B Final (PLACEHOLDER)"""
+    
+    def __init__(self, input_queue: ProcessingQueue, config: AppConfig):
+        super().__init__("Trilium Upload", input_queue, None)  # No output queue - end of Stream B
+        self.config = config
+    
+    def process_object(self, obj: TranskriptObject) -> Result[TranskriptObject, CoreError]:
+        self.logger.info(f"Starting Trilium upload: {obj.titel}")
+        
+        # PLACEHOLDER: Mock Trilium upload
+        time.sleep(1.0)  # Simulate upload
+        
+        obj.trilium_link = f"https://trilium.example.com/note/{obj.titel.replace(' ', '_')}"
+        obj.update_stage("trilium_upload_completed")
+        
+        return Ok(obj)
+    
+    def get_next_stage_name(self) -> str:
+        return "Stream B Completed"
 
 # =============================================================================
-# GUI-COMPATIBLE PIPELINE MANAGER mit SECRET-RESOLUTION
+# ENHANCED FORK-JOIN PIPELINE MANAGER
 # =============================================================================
 
 class PipelineManager(QThread):
-    """GUI-Compatible Pipeline Manager mit einmaliger Secret-Resolution"""
+    """Enhanced Pipeline Manager with Fork-Join State Management"""
     
     # Signals für GUI
     status_updated = Signal(PipelineStatus)
@@ -298,98 +380,63 @@ class PipelineManager(QThread):
         self.state = PipelineState.IDLE
         self.input_urls_text: str = ""
         self.processing_errors: List[ProcessingError] = []
-        self.completed_videos: List[ProcessObject] = []
+        self.completed_videos: List[ArchivObject] = []
         
-        # SECRETS BEIM START EINMALIG LADEN (nur für Upload + Processing)
-        self.resolved_config_dict = self._resolve_secrets_to_dict()
-        
-        # Queues
+        # Queues für Fork-Join-Architecture
         self.queues = {
+            # Sequential phase (unchanged)
             "audio_download": ProcessingQueue("audio_download"),
             "transcription": ProcessingQueue("transcription"),
             "analysis": ProcessingQueue("analysis"),
+            
+            # Stream A (Video Processing)
             "video_download": ProcessingQueue("video_download"),
             "upload": ProcessingQueue("upload"),
-            "processing": ProcessingQueue("processing")
+            
+            # Stream B (Transcript Processing)
+            "llm_processing": ProcessingQueue("llm_processing"),
+            "trilium_upload": ProcessingQueue("trilium_upload")
         }
+        
+        # NEW: Fork-Join State Collections (as specified in architecture)
+        self.video_success_list: List[ProcessObject] = []
+        self.video_failure_list: List[ProcessObject] = []
+        self.transcript_success_list: List[TranskriptObject] = []
+        self.transcript_failure_list: List[TranskriptObject] = []
+        
+        # Archive management
+        self.archive_database = ArchiveDatabase()
+        
+        # Thread safety
+        self.state_lock = threading.Lock()
         
         # Workers
         self.workers: List[BaseWorker] = []
         
-        # Status Update Timer - 2 seconds
+        # Status Update Timer
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.emit_status_update)
-        self.status_timer.start(2000)
-    
-    def _resolve_secrets_to_dict(self) -> dict:
-        """Lädt alle Secrets und erstellt vollständige Config-Dict"""
-        
-        # Config zu Dict konvertieren
-        config_dict = self.config.dict()
-        
-        # Secret Manager für einmalige Secret-Resolution
-        secret_manager = SecureConfigManager()
-        secret_manager.load_config()
-        
-        try:
-            # Initialize resolved_secrets dict
-            config_dict['resolved_secrets'] = {}
-            
-            # Trilium Secret laden (für Processing Worker)
-            trilium_token_result = secret_manager.get_trilium_token()
-            if isinstance(trilium_token_result, Ok):
-                config_dict['resolved_secrets']['trilium_token'] = unwrap_ok(trilium_token_result)
-                self.logger.info("✅ Trilium token resolved")
-            else:
-                error = unwrap_err(trilium_token_result)
-                self.logger.warning(f"⚠️ Trilium token resolution failed: {error.message}")
-                config_dict['resolved_secrets']['trilium_token'] = None
-            
-            # Nextcloud Secret laden (für Upload Worker)
-            nextcloud_password_result = secret_manager.get_nextcloud_password()
-            if isinstance(nextcloud_password_result, Ok):
-                config_dict['resolved_secrets']['nextcloud_password'] = unwrap_ok(nextcloud_password_result)
-                self.logger.info("✅ Nextcloud password resolved")
-            else:
-                error = unwrap_err(nextcloud_password_result)
-                self.logger.warning(f"⚠️ Nextcloud password resolution failed: {error.message}")
-                config_dict['resolved_secrets']['nextcloud_password'] = None
-            
-            self.logger.info(
-                f"✅ Secret resolution completed",
-                extra={
-                    'trilium_resolved': config_dict['resolved_secrets']['trilium_token'] is not None,
-                    'nextcloud_resolved': config_dict['resolved_secrets']['nextcloud_password'] is not None,
-                    'total_secrets': len([s for s in config_dict['resolved_secrets'].values() if s is not None])
-                }
-            )
-            
-        except Exception as e:
-            self.logger.error(f"Critical error during secret resolution: {e}")
-            config_dict['resolved_secrets'] = {
-                'trilium_token': None,
-                'nextcloud_password': None
-            }
-        
-        return config_dict
+        self.status_timer.start(2000)  # 2 seconds
     
     def start_pipeline(self, urls_text: str) -> Result[None, CoreError]:
-        """Startet Pipeline (Metadata synchron, dann Worker-Pipeline)"""
+        """Startet Pipeline mit synchroner Metadata-Extraktion"""
         if self.state != PipelineState.IDLE:
             return Err(CoreError("Pipeline already running"))
-        
-        # Validate resolved secrets (kritisch nur für Upload)
-        resolved_secrets = self.resolved_config_dict.get('resolved_secrets', {})
-        if not resolved_secrets.get('nextcloud_password'):
-            return Err(CoreError("Nextcloud password not resolved - check keyring configuration"))
         
         self.input_urls_text = urls_text
         self.processing_errors.clear()
         self.completed_videos.clear()
         
-        self.logger.info("Starting pipeline with resolved secrets")
+        # Clear state collections
+        with self.state_lock:
+            self.video_success_list.clear()
+            self.video_failure_list.clear()
+            self.transcript_success_list.clear()
+            self.transcript_failure_list.clear()
         
-        # SYNCHRONE Metadata-Extraktion
+        self.logger.info("Starting Fork-Join pipeline")
+        
+        # SYNCHRONE Metadata-Extraktion (no worker needed)
         objects_result = process_urls_to_objects(urls_text, self.config.processing.__dict__)
         
         if isinstance(objects_result, Err):
@@ -402,7 +449,14 @@ class PipelineManager(QThread):
         
         # Queue ProcessObjects für Audio Download
         for process_obj in process_objects:
-            self.queues["audio_download"].put(process_obj)
+            duplicate_result = self.archive_database.check_duplicate(process_obj)
+            if isinstance(duplicate_result, Ok) and unwrap_ok(duplicate_result):
+                self.logger.info(f"Skipping duplicate video: {process_obj.titel}")
+                continue
+            
+            put_result = self.queues["audio_download"].put(process_obj)
+            if isinstance(put_result, Err):
+                self.logger.error(f"Failed to queue audio download: {unwrap_err(put_result).message}")
         
         # Setup und start workers
         setup_result = self.setup_workers()
@@ -412,70 +466,179 @@ class PipelineManager(QThread):
         self.state = PipelineState.RUNNING
         self.start()  # Start QThread
         
-        self.logger.info(f"Pipeline started with {len(process_objects)} videos and resolved secrets")
+        self.logger.info(f"Fork-Join pipeline started with {len(process_objects)} videos")
         return Ok(None)
     
     def setup_workers(self) -> Result[None, CoreError]:
-        """Worker Setup - NUR Upload + Processing bekommen Config-Dict"""
+        """Enhanced worker setup mit Fork-Join-Workers"""
         try:
             self.cleanup_workers()
             
-            # Worker Setup: AppConfig für Worker ohne Secrets, Dict für Worker mit Secrets
+            # Create all workers
             self.workers = [
-                AudioDownloadWorker(self.queues["audio_download"], self.queues["transcription"], self.config),       # ← AppConfig
-                TranscriptionWorker(self.queues["transcription"], self.queues["analysis"], self.config),             # ← AppConfig
-                AnalysisWorker(self.queues["analysis"], self.queues["video_download"], self.config),                 # ← AppConfig
-                VideoDownloadWorker(self.queues["video_download"], self.queues["upload"], self.config),              # ← AppConfig
-                UploadWorker(self.queues["upload"], self.queues["processing"], self.resolved_config_dict),           # ← Dict!
-                ProcessingWorker(self.queues["processing"], None, self.resolved_config_dict)                         # ← Dict!
+                # Sequential workers
+                AudioDownloadWorker(self.queues["audio_download"], self.queues["transcription"], self.config),
+                TranscriptionWorker(self.queues["transcription"], self.queues["analysis"], self.config),
+                AnalysisWorker(self.queues["analysis"], self.config, self),  # Fork point
+                
+                # Stream A: Video Processing
+                VideoDownloadWorker(self.queues["video_download"], self.queues["upload"], self.config),
+                UploadWorker(self.queues["upload"], self.config),
+                
+                # Stream B: Transcript Processing
+                LLMProcessingWorker(self.queues["llm_processing"], self.queues["trilium_upload"], self.config),
+                TrilliumUploadWorker(self.queues["trilium_upload"], self.config)
             ]
             
-            # Connect signals and start
+            # Connect signals für Fork-Join-Orchestration
             for worker in self.workers:
-                worker.object_processed.connect(self.on_object_processed)
-                worker.processing_error.connect(self.on_processing_error)
-                worker.stage_status_changed.connect(self.on_stage_status_changed)
+                worker.object_processed.connect(self.handle_worker_completion)
+                worker.processing_error.connect(self.handle_worker_error)
+            
+            # Start all workers
+            for worker in self.workers:
                 worker.start()
             
-            self.logger.info(f"Started {len(self.workers)} workers (2 with resolved secrets)")
+            self.logger.info(f"Started {len(self.workers)} workers for Fork-Join pipeline")
             return Ok(None)
             
         except Exception as e:
-            self.logger.error(f"Worker setup failed: {e}")
-            return Err(CoreError(f"Worker setup failed: {e}"))
+            return Err(CoreError(f"Fork-Join worker setup failed: {e}"))
     
-    def on_object_processed(self, obj: ProcessObject, next_stage: str):
-        """Handler für erfolgreich verarbeitete Objects"""
-        if next_stage == "completed":
-            self.completed_videos.append(obj)
-            self.video_completed.emit(obj.titel, True)
-        elif next_stage == "archive":
-            obj.update_stage("analysis_failed")
-            self.completed_videos.append(obj)
-            self.video_completed.emit(obj.titel, False)
-            self.logger.info(f"Video archived (failed analysis): {obj.titel}")
+    def handle_worker_completion(self, obj: Union[ProcessObject, TranskriptObject], next_stage: str):
+        """Handles successful worker completion with Fork-Join-Logic"""
+        with self.state_lock:
+            if isinstance(obj, ProcessObject):
+                # Stream A completion
+                if next_stage == "stream_completed" or next_stage == "Stream A Completed":
+                    obj.video_stream_success = True
+                    self.process_video_completion(obj)
+                    
+            elif isinstance(obj, TranskriptObject):
+                # Stream B completion
+                if next_stage == "stream_completed" or next_stage == "Stream B Completed":
+                    obj.success = True
+                    self.process_transcript_completion(obj)
     
-    def on_processing_error(self, obj: ProcessObject, error_message: str):
-        """Handler für Processing-Fehler"""
-        error = ProcessingError(
-            video_title=obj.titel,
-            video_url=obj.original_url or obj.titel,
-            stage=obj.processing_stage,
-            error_message=error_message,
-            timestamp=datetime.now(),
-            process_object=obj
-        )
+    def handle_worker_error(self, obj: Union[ProcessObject, TranskriptObject], error_message: str):
+        """Handles worker errors mit Fork-Join-Logic"""
+        with self.state_lock:
+            if isinstance(obj, ProcessObject):
+                # Stream A failure
+                obj.video_stream_success = False
+                if hasattr(obj, 'add_error'):
+                    obj.add_error(f"Video stream failed: {error_message}")
+                self.process_video_completion(obj)
+                
+            elif isinstance(obj, TranskriptObject):
+                # Stream B failure
+                obj.success = False
+                obj.error_message = error_message
+                self.process_transcript_completion(obj)
+    
+    def process_video_completion(self, video_obj: ProcessObject):
+        """Processes Stream A completion and attempts merging"""
+        titel = video_obj.titel
         
-        self.processing_errors.append(error)
-        self.video_completed.emit(obj.titel, False)
-        self.logger.error(f"Processing error: {obj.titel}: {error_message} in Stage:{obj.processing_stage}")
+        # Check if corresponding transcript is already completed
+        transcript_match = self.find_and_remove_transcript(titel)
+        
+        if transcript_match:
+            # Both streams completed - merge and archive
+            archive_obj = self.merge_objects(video_obj, transcript_match)
+            self.completed_videos.append(archive_obj)
+            self.video_completed.emit(archive_obj.titel, archive_obj.final_success)
+        else:
+            # Store in appropriate list for later merging
+            if video_obj.video_stream_success:
+                self.video_success_list.append(video_obj)
+            else:
+                self.video_failure_list.append(video_obj)
     
-    def on_stage_status_changed(self, stage_name: str, queue_size: int):
-        """Handler für Stage-Status-Änderungen (handled by timer)"""
-        pass
+    def process_transcript_completion(self, transcript_obj: TranskriptObject):
+        """Processes Stream B completion and attempts merging"""
+        titel = transcript_obj.titel
+        
+        # Check if corresponding video is already completed
+        video_match = self.find_and_remove_video(titel)
+        
+        if video_match:
+            # Both streams completed - merge and archive
+            archive_obj = self.merge_objects(video_match, transcript_obj)
+            self.completed_videos.append(archive_obj)
+            self.video_completed.emit(archive_obj.titel, archive_obj.final_success)
+        else:
+            # Store in appropriate list for later merging
+            if transcript_obj.success:
+                self.transcript_success_list.append(transcript_obj)
+            else:
+                self.transcript_failure_list.append(transcript_obj)
+    
+    def find_and_remove_transcript(self, titel: str) -> Optional[TranskriptObject]:
+        """Finds and removes matching transcript from state lists"""
+        # Check success list first
+        for i, obj in enumerate(self.transcript_success_list):
+            if obj.titel == titel:
+                return self.transcript_success_list.pop(i)
+        
+        # Check failure list
+        for i, obj in enumerate(self.transcript_failure_list):
+            if obj.titel == titel:
+                return self.transcript_failure_list.pop(i)
+        
+        return None
+    
+    def find_and_remove_video(self, titel: str) -> Optional[ProcessObject]:
+        """Finds and removes matching video from state lists"""
+        # Check success list first
+        for i, obj in enumerate(self.video_success_list):
+            if obj.titel == titel:
+                return self.video_success_list.pop(i)
+        
+        # Check failure list
+        for i, obj in enumerate(self.video_failure_list):
+            if obj.titel == titel:
+                return self.video_failure_list.pop(i)
+        
+        return None
+    
+    def merge_objects(self, video_obj: ProcessObject, transcript_obj: TranskriptObject) -> ArchivObject:
+        """Creates ArchivObject and archives directly (Pipeline Manager handles archive)"""
+        # Create archive object with clean separation
+        archive_obj = ArchivObject.from_process_and_transcript(video_obj, transcript_obj)
+        
+        # Direct archive insertion by Pipeline Manager
+        archive_result = self.archive_database.save_processed_video(archive_obj)
+        
+        if isinstance(archive_result, Ok):
+            self.logger.info(
+                f"Video archived successfully: {archive_obj.titel}",
+                extra={
+                    'final_success': archive_obj.final_success,
+                    'video_stream_success': archive_obj.video_stream_success,
+                    'transcript_stream_success': archive_obj.transcript_stream_success,
+                    'llm_model': archive_obj.llm_model,
+                    'llm_cost': archive_obj.llm_cost
+                }
+            )
+        else:
+            self.logger.error(f"Archive failed for {archive_obj.titel}: {unwrap_err(archive_result).message}")
+        
+        return archive_obj
+    
+    def archive_final_object(self, archive_obj: ArchivObject):
+        """Direct archiving method called by AnalysisWorker for failed analysis"""
+        archive_result = self.archive_database.save_processed_video(archive_obj)
+        
+        if isinstance(archive_result, Ok):
+            self.logger.info(f"Failed analysis object archived: {archive_obj.titel}")
+            self.completed_videos.append(archive_obj)
+            self.video_completed.emit(archive_obj.titel, False)
+        else:
+            self.logger.error(f"Archive failed for failed analysis: {archive_obj.titel}")
     
     def emit_status_update(self):
-        """Enhanced Status-Update mit Worker-Activity + Health"""
+        """Enhanced Status-Update with Fork-Join metrics"""
         if self.state == PipelineState.IDLE:
             return
         
@@ -502,24 +665,19 @@ class PipelineManager(QThread):
         else:
             health = "healthy"
         
-        # Estimate completion time
-        estimated_completion = None
-        if active_workers_list:
-            remaining_items = sum(queue.size() for queue in self.queues.values())
-            if remaining_items > 0:
-                avg_processing_time = 3.0  # Estimated seconds per item per stage
-                eta_seconds = remaining_items * avg_processing_time
-                estimated_completion = datetime.now() + timedelta(seconds=eta_seconds)
-        
-        # Status-Berechnung mit Worker-Activity
+        # Enhanced Status-Berechnung with active worker tracking
         status = PipelineStatus(
-            # Queue size + active worker (0 oder 1)
+            # Queue sizes + active worker (0 or 1 per queue)
             audio_download_queue=self.queues["audio_download"].size() + (1 if any(w.stage_name == "Audio Download" and w.is_processing for w in self.workers) else 0),
             transcription_queue=self.queues["transcription"].size() + (1 if any(w.stage_name == "Transcription" and w.is_processing for w in self.workers) else 0),
             analysis_queue=self.queues["analysis"].size() + (1 if any(w.stage_name == "Analysis" and w.is_processing for w in self.workers) else 0),
             video_download_queue=self.queues["video_download"].size() + (1 if any(w.stage_name == "Video Download" and w.is_processing for w in self.workers) else 0),
             upload_queue=self.queues["upload"].size() + (1 if any(w.stage_name == "Upload" and w.is_processing for w in self.workers) else 0),
-            processing_queue=self.queues["processing"].size() + (1 if any(w.stage_name == "Processing" and w.is_processing for w in self.workers) else 0),
+            processing_queue=0,  # Not used in Fork-Join
+            
+            # NEW: Fork-Join queues
+            llm_processing_queue=self.queues["llm_processing"].size() + (1 if any(w.stage_name == "LLM Processing" and w.is_processing for w in self.workers) else 0),
+            trilium_upload_queue=self.queues["trilium_upload"].size() + (1 if any(w.stage_name == "Trilium Upload" and w.is_processing for w in self.workers) else 0),
             
             total_queued=self.get_total_objects_count(),
             total_completed=len(self.completed_videos),
@@ -528,10 +686,8 @@ class PipelineManager(QThread):
             current_stage=self.get_current_stage(active_workers_list),
             current_video=current_video_title[:30] + "..." if current_video_title and len(current_video_title) > 30 else current_video_title,
             
-            # Enhanced features
             active_workers=active_workers_list,
-            pipeline_health=health,
-            estimated_completion=estimated_completion
+            pipeline_health=health
         )
         
         self.status_updated.emit(status)
@@ -539,14 +695,18 @@ class PipelineManager(QThread):
         # Check if pipeline finished
         all_queues_empty = not status.is_active()
         no_workers_active = len(active_workers_list) == 0
+        no_pending_merges = (len(self.video_success_list) + len(self.video_failure_list) + 
+                           len(self.transcript_success_list) + len(self.transcript_failure_list)) == 0
         
-        if all_queues_empty and no_workers_active and self.state == PipelineState.RUNNING:
+        if all_queues_empty and no_workers_active and no_pending_merges and self.state == PipelineState.RUNNING:
             self.finish_pipeline()
     
     def get_total_objects_count(self) -> int:
         """Gesamtzahl Objects in Pipeline"""
         queue_count = sum(queue.size() for queue in self.queues.values())
-        return queue_count + len(self.completed_videos) + len(self.processing_errors)
+        state_count = (len(self.video_success_list) + len(self.video_failure_list) + 
+                      len(self.transcript_success_list) + len(self.transcript_failure_list))
+        return queue_count + state_count + len(self.completed_videos) + len(self.processing_errors)
     
     def get_current_stage(self, active_workers: List[str]) -> str:
         """Current Stage basierend auf aktiven Workern"""
@@ -563,8 +723,17 @@ class PipelineManager(QThread):
     def finish_pipeline(self):
         """Pipeline beenden und Summary senden"""
         total_processed = len(self.completed_videos) + len(self.processing_errors)
+        successful_videos = sum(1 for video in self.completed_videos if video.final_success)
         
-        self.logger.info(f"Pipeline finished: {len(self.completed_videos)} completed, {len(self.processing_errors)} failed")
+        self.logger.info(
+            f"Fork-Join pipeline finished",
+            extra={
+                'total_videos': total_processed,
+                'successful': successful_videos,
+                'failed': total_processed - successful_videos,
+                'processing_errors': len(self.processing_errors)
+            }
+        )
         
         self.cleanup_workers()
         self.state = PipelineState.FINISHED
@@ -574,7 +743,7 @@ class PipelineManager(QThread):
         
         self.pipeline_finished.emit(
             total_processed,
-            len(self.completed_videos),
+            successful_videos,
             error_messages
         )
         
@@ -585,7 +754,7 @@ class PipelineManager(QThread):
         if self.state != PipelineState.RUNNING:
             return
         
-        self.logger.info("Stopping pipeline...")
+        self.logger.info("Stopping Fork-Join pipeline...")
         self.state = PipelineState.STOPPING
         
         self.cleanup_workers()
@@ -594,7 +763,7 @@ class PipelineManager(QThread):
             self.wait(5000)
         
         self.state = PipelineState.IDLE
-        self.logger.info("Pipeline stopped")
+        self.logger.info("Fork-Join pipeline stopped")
     
     def cleanup_workers(self):
         """Alle Worker beenden"""
@@ -608,13 +777,13 @@ class PipelineManager(QThread):
             self.msleep(100)
 
 # =============================================================================
-# GUI INTEGRATION (unchanged)
+# GUI INTEGRATION (Enhanced for Fork-Join)
 # =============================================================================
 
 def integrate_pipeline_with_gui(main_window, config: AppConfig):
-    """Integriert Pipeline Manager in GUI"""
+    """Integriert Enhanced Fork-Join Pipeline Manager in GUI"""
     
-    # Create Pipeline Manager
+    # Create Enhanced Pipeline Manager
     main_window.pipeline_manager = PipelineManager(config)
     
     # Connect signals
@@ -623,11 +792,13 @@ def integrate_pipeline_with_gui(main_window, config: AppConfig):
     )
     
     main_window.pipeline_manager.video_completed.connect(
-        lambda title, success: main_window.logger.info(f"Video completed: {title} ({'Success' if success else 'Failed'})")
+        lambda title, success: main_window.logger.info(
+            f"Video completed: {title} ({'Success' if success else 'Failed'})"
+        )
     )
     
     main_window.pipeline_manager.pipeline_finished.connect(
-        lambda total, success, errors: show_pipeline_summary(main_window, total, success, errors)
+        lambda total, success, errors: show_fork_join_pipeline_summary(main_window, total, success, errors)
     )
     
     # Enhanced start_analysis method
@@ -638,27 +809,27 @@ def integrate_pipeline_with_gui(main_window, config: AppConfig):
             main_window.status_bar.showMessage("Please enter YouTube URLs")
             return
         
-        # Start pipeline
+        # Start Fork-Join pipeline
         start_result = main_window.pipeline_manager.start_pipeline(urls_text)
         
         if isinstance(start_result, Ok):
-            main_window.status_bar.showMessage("Pipeline started - Processing URLs...")
+            main_window.status_bar.showMessage("Fork-Join Pipeline started - Processing URLs...")
             main_window.url_input.clear()
         else:
             error = unwrap_err(start_result)
             main_window.status_bar.showMessage(f"Failed to start: {error.message}")
-            main_window.logger.error(f"Pipeline start failed: {error.message}")
+            main_window.logger.error(f"Fork-Join Pipeline start failed: {error.message}")
     
     main_window.start_analysis = enhanced_start_analysis
 
-def show_pipeline_summary(main_window, total: int, success: int, errors: List[str]):
-    """Pipeline Summary Dialog"""
+def show_fork_join_pipeline_summary(main_window, total: int, success: int, errors: List[str]):
+    """Enhanced Pipeline Summary Dialog für Fork-Join"""
     failed = total - success
     
     if failed == 0:
         msg = QMessageBox(main_window)
-        msg.setWindowTitle("Pipeline Complete")
-        msg.setText(f"✅ Successfully processed {success} of {total} videos!")
+        msg.setWindowTitle("Fork-Join Pipeline Complete")
+        msg.setText(f"✅ Successfully processed {success} of {total} videos!\n\nFork-Join architecture completed successfully.")
         msg.setIcon(QMessageBox.Information)
         msg.exec()
     else:
@@ -667,8 +838,59 @@ def show_pipeline_summary(main_window, total: int, success: int, errors: List[st
             error_text += f"\n... and {len(errors) - 10} more errors"
         
         msg = QMessageBox(main_window)
-        msg.setWindowTitle("Pipeline Complete with Errors")
-        msg.setText(f"Processed {total} videos:\n✅ {success} successful\n❌ {failed} failed")
+        msg.setWindowTitle("Fork-Join Pipeline Complete with Errors")
+        msg.setText(f"Fork-Join Pipeline processed {total} videos:\n✅ {success} successful\n❌ {failed} failed")
         msg.setDetailedText(f"Error details:\n{error_text}")
         msg.setIcon(QMessageBox.Warning)
         msg.exec()
+
+# =============================================================================
+# EXAMPLE USAGE & TESTING
+# =============================================================================
+
+if __name__ == "__main__":
+    from logging_plus import setup_logging
+    from yt_analyzer_config import SecureConfigManager
+    
+    # Setup
+    setup_logging("fork_join_pipeline_test", "DEBUG")
+    
+    # Test configuration
+    config_manager = SecureConfigManager()
+    config_result = config_manager.load_config()
+    
+    if isinstance(config_result, Ok):
+        config = unwrap_ok(config_result)
+        
+        # Create test pipeline manager
+        pipeline_manager = PipelineManager(config)
+        
+        print("✅ Fork-Join Pipeline Manager created successfully")
+        print(f"   Queues: {list(pipeline_manager.queues.keys())}")
+        print(f"   State Collections: video_lists + transcript_lists")
+        print(f"   Archive Database: {pipeline_manager.archive_database}")
+        
+        # Test queue operations
+        test_urls = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        
+        print(f"\n🧪 Testing Fork-Join Pipeline startup...")
+        start_result = pipeline_manager.start_pipeline(test_urls)
+        
+        if isinstance(start_result, Ok):
+            print("✅ Pipeline started successfully")
+            
+            # Let it run for a few seconds
+            time.sleep(5)
+            
+            # Stop pipeline
+            pipeline_manager.stop_pipeline()
+            print("✅ Pipeline stopped successfully")
+        else:
+            error = unwrap_err(start_result)
+            print(f"❌ Pipeline start failed: {error.message}")
+    
+    else:
+        error = unwrap_err(config_result)
+        print(f"❌ Config loading failed: {error.message}")
+    
+    print("\n🚀 Fork-Join Pipeline Manager Implementation Complete!")
