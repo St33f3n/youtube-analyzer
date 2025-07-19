@@ -1,6 +1,6 @@
 """
-YouTube Analyzer - Configuration System & Rule Analysis
-Secure Config with Keyring + Flexible Rule System
+YouTube Analyzer - Updated Configuration System
+Erweitert um nextcloud_base_url für WebDAV4-Integration
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from core_types import Result, Ok, Err, CoreError, ErrorContext
 from logging_plus import get_logger, log_feature
 
 # =============================================================================
-# SECURE SECRET MANAGEMENT
+# SECURE SECRET MANAGEMENT (unchanged)
 # =============================================================================
 
 class SecretManager:
@@ -115,7 +115,7 @@ class SecretManager:
             return Err(CoreError(f"Secret access test failed: {e}", context))
 
 # =============================================================================
-# PYDANTIC CONFIG MODELS (Updated)
+# PYDANTIC CONFIG MODELS (Updated with Nextcloud Base URL)
 # =============================================================================
 
 class SecretsConfig(BaseModel):
@@ -183,8 +183,6 @@ class RulesConfig(BaseModel):
     @validator('fachinhalt', 'qualität', 'länge_tiefe', 'relevanz')
     def validate_weights_sum(cls, v, values):
         """Validiert dass Gewichtungen sinnvoll sind"""
-        # Note: Diese Validierung läuft pro Feld, nicht am Ende
-        # Für Gesamt-Validierung siehe validate_total_weights unten
         return v
 
 class ScoringConfig(BaseModel):
@@ -193,7 +191,8 @@ class ScoringConfig(BaseModel):
     min_confidence: float = Field(ge=0.0, le=1.0, description="Mindest-Konfidenz der KI-Bewertung")
 
 class StorageConfig(BaseModel):
-    """Speicher-Pfad-Konfiguration"""
+    """UPDATED: Speicher-Pfad-Konfiguration mit Nextcloud Base URL"""
+    nextcloud_base_url: str = Field(description="Full WebDAV base URL für Nextcloud")  # ADDED
     nextcloud_path: str = Field(description="Upload-Pfad in Nextcloud")
     trilium_parent_note: str = Field(description="Parent Note in Trilium für YouTube-Inhalte")
     sqlite_path: str = Field(description="Pfad zur SQLite-Datenbank")
@@ -223,7 +222,7 @@ class AppConfig(BaseModel):
     whisper: WhisperConfig = Field(default_factory=WhisperConfig)
     rules: RulesConfig
     scoring: ScoringConfig
-    storage: StorageConfig
+    storage: StorageConfig  # UPDATED with nextcloud_base_url
     
     # Technical Components
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
@@ -238,7 +237,7 @@ class AppConfig(BaseModel):
         return v
 
 # =============================================================================
-# SECURE CONFIG MANAGER
+# SECURE CONFIG MANAGER (unchanged logic, updated example config)
 # =============================================================================
 
 class SecureConfigManager:
@@ -275,7 +274,8 @@ class SecureConfigManager:
                     'config_path': str(self.config_path),
                     'enabled_rules': list(self.config.rules.get_enabled_rules().keys()),
                     'total_rule_weight': self.config.rules.get_total_weight(),
-                    'whisper_enabled': self.config.whisper.enabled
+                    'whisper_enabled': self.config.whisper.enabled,
+                    'nextcloud_base_url': self.config.storage.nextcloud_base_url  # ADDED logging
                 }
             )
             
@@ -340,7 +340,7 @@ class SecureConfigManager:
         )
     
     def _generate_example_config(self) -> None:
-        """Generiert Beispiel-Konfiguration"""
+        """UPDATED: Generiert Beispiel-Konfiguration mit nextcloud_base_url"""
         example_config = {
             'secrets': {
                 'trilium_service': 'TrilliumToken',
@@ -382,6 +382,7 @@ class SecureConfigManager:
                 'min_confidence': 0.6
             },
             'storage': {
+                'nextcloud_base_url': 'https://nextcloud.example.com/remote.php/dav/files/username/',  # ADDED
                 'nextcloud_path': '/YouTube-Archive',
                 'trilium_parent_note': 'YouTube Knowledge Base',
                 'sqlite_path': 'data/youtube_analyzer.db'
@@ -406,7 +407,7 @@ class SecureConfigManager:
             yaml.dump(example_config, f, default_flow_style=False, allow_unicode=True)
 
 # =============================================================================
-# ENHANCED RULE SYSTEM  
+# ENHANCED RULE SYSTEM (unchanged)
 # =============================================================================
 
 class EnhancedRuleSystem:
@@ -611,22 +612,21 @@ if __name__ == "__main__":
     setup_logging("secure_config_demo", "DEBUG")
     
     # Generiere Beispiel-Config
-    config_manager = SecureConfigManager(Path("secure_config.yaml"))
+    config_manager = SecureConfigManager(Path("updated_config.yaml"))
     
     # Generiere Beispiel-Prompts
     prompts_dir = Path("prompts")
     generate_example_prompts(prompts_dir)
     
-    print("🚀 Secure Configuration System Setup Complete!")
+    print("🚀 Updated Configuration System Setup Complete!")
     print("==============================================")
     print("Generated files:")
-    print("- secure_config.yaml (example configuration)")
+    print("- updated_config.yaml (UPDATED with nextcloud_base_url)")
     print("- prompts/*.md (example rule prompts)")
     print("")
-    print("Next steps:")
-    print("1. Edit secure_config.yaml with your settings")
-    print("2. Add secrets manually to KeePassXC:")
-    print("   - Service: 'TrilliumToken', Username: 'token'")
-    print("   - Service: 'NextcloudPW', Username: 'steefen'")
-    print("3. Customize prompts in prompts/ directory")
-    print("4. Ensure KeePassXC is running and unlocked")
+    print("UPDATED Config includes:")
+    print("- nextcloud_base_url: Full WebDAV endpoint URL")
+    print("- nextcloud_path: Upload path within Nextcloud")
+    print("")
+    print("Example nextcloud_base_url:")
+    print("https://nextcloud.example.com/remote.php/dav/files/username/")

@@ -1,6 +1,6 @@
 """
-YouTube Analyzer - Enhanced PySide6 GUI with Full Pipeline Manager Compatibility
-Simple Interface mit Pipeline-Status-Anzeige und Config-Validation
+YouTube Analyzer - Compatible GUI without Metadata Worker
+Simple Interface mit Pipeline-Status-Anzeige (ohne Metadata-Anzeige)
 """
 
 import sys
@@ -103,11 +103,11 @@ class OceanTheme:
     GOLDEN_BEIGE = "#d4c5a9"
 
 # =============================================================================
-# ENHANCED PIPELINE STATUS WIDGET
+# COMPATIBLE PIPELINE STATUS WIDGET (ohne Metadata)
 # =============================================================================
 
 class PipelineStatusWidget(QFrame):
-    """Enhanced Pipeline-Status-Widget mit korrekte Reihenfolge und erweiterten Features"""
+    """Compatible Pipeline-Status-Widget ohne Metadata-Anzeige"""
     
     def __init__(self):
         super().__init__()
@@ -116,7 +116,7 @@ class PipelineStatusWidget(QFrame):
         self.apply_ocean_theme()
     
     def setup_ui(self):
-        """Setup der UI-Komponenten mit korrekter Grid-Reihenfolge"""
+        """Setup UI ohne Metadata-Worker"""
         self.setFrameStyle(QFrame.StyledPanel)
         layout = QVBoxLayout(self)
         
@@ -132,20 +132,19 @@ class PipelineStatusWidget(QFrame):
         self.current_label.setFont(QFont("Arial", 10))
         layout.addWidget(self.current_label)
         
-        # Queue Grid - CORRECTED ORDER: Links oben->unten, dann rechts oben->unten
+        # Queue Grid - FIXED: Ohne Metadata, Audio Download nach links verschoben
         grid_layout = QGridLayout()
         
         # Queue Labels und Values
         self.queue_labels = {}
         self.queue_values = {}
         
-        # FIXED: Korrekte Reihenfolge - Links oben->unten, dann rechts oben->unten
+        # FIXED: Neue Reihenfolge ohne Metadata
         queue_mapping = [
             # Linke Spalte (col=0)
-            ("Metadata", "metadata_queue", 0, 0),
-            ("Audio Download", "audio_download_queue", 1, 0), 
-            ("Transcription", "transcription_queue", 2, 0),
-            ("Analysis", "analysis_queue", 3, 0),
+            ("Audio Download", "audio_download_queue", 0, 0),
+            ("Transcription", "transcription_queue", 1, 0), 
+            ("Analysis", "analysis_queue", 2, 0),
             
             # Rechte Spalte (col=2)  
             ("Video Download", "video_download_queue", 0, 2),
@@ -208,10 +207,10 @@ class PipelineStatusWidget(QFrame):
         layout.addWidget(self.eta_label)
     
     def update_status(self, status: PipelineStatus):
-        """Enhanced Status-Update mit allen neuen Features"""
+        """Enhanced Status-Update compatible mit Pipeline Manager"""
         # Debug logging für Status-Updates
         self.logger.debug(
-            f"Enhanced GUI Status Update",
+            f"GUI Status Update",
             extra={
                 'total_queued': status.total_queued,
                 'total_completed': status.total_completed,
@@ -226,18 +225,18 @@ class PipelineStatusWidget(QFrame):
         # Current Stage
         self.current_label.setText(f"Status: {status.current_stage}")
         
-        # Queue Values mit enhanced Color-Coding
+        # Queue Values mit Color-Coding
         for queue_attr, value_label in self.queue_values.items():
             count = getattr(status, queue_attr, 0)
             value_label.setText(str(count))
             
-            # Enhanced Color coding für aktive Queues
+            # Color coding für aktive Queues
             if count > 0:
                 value_label.setStyleSheet(f"color: {OceanTheme.BIOLUMINESCENT}; font-weight: bold;")
             else:
                 value_label.setStyleSheet(f"color: {OceanTheme.TEXT_MUTED};")
         
-        # Summary Stats mit enhanced Progress-Calculation
+        # Summary Stats mit Progress-Calculation
         total_processed = status.total_completed + status.total_failed
         
         self.total_label.setText(f"Total: {status.total_queued}")
@@ -290,7 +289,7 @@ class PipelineStatusWidget(QFrame):
             self.eta_label.setText("")
     
     def apply_ocean_theme(self):
-        """Wendet Enhanced Ocean-Theme auf Widget an"""
+        """Wendet Ocean-Theme auf Widget an"""
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: {OceanTheme.DEEP_WATER};
@@ -305,11 +304,11 @@ class PipelineStatusWidget(QFrame):
         """)
 
 # =============================================================================
-# CONFIG VALIDATION WINDOW (unchanged, but enhanced theme)
+# CONFIG VALIDATION WINDOW (unchanged)
 # =============================================================================
 
 class ConfigValidationWindow(QDialog):
-    """Enhanced Config-Validation-Window"""
+    """Config-Validation-Window"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -514,7 +513,7 @@ class ConfigValidationWindow(QDialog):
         )
     
     def apply_ocean_theme(self):
-        """Wendet Enhanced Ocean-Theme an"""
+        """Wendet Ocean-Theme an"""
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {OceanTheme.ABYSS};
@@ -543,11 +542,11 @@ class ConfigValidationWindow(QDialog):
         """)
 
 # =============================================================================
-# ENHANCED MAIN WINDOW
+# MAIN WINDOW (Compatible)
 # =============================================================================
 
 class YouTubeAnalyzerMainWindow(QMainWindow):
-    """Enhanced Haupt-Fenster mit vollständiger Pipeline-Integration"""
+    """Compatible Haupt-Fenster ohne Metadata-Worker"""
     
     def __init__(self):
         super().__init__()
@@ -560,8 +559,8 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         self.setup_status_timer()
     
     def setup_ui(self):
-        """Setup der Enhanced Haupt-UI"""
-        self.setWindowTitle("YouTube Analyzer - Enhanced Edition")
+        """Setup der Haupt-UI"""
+        self.setWindowTitle("YouTube Analyzer")
         self.setMinimumSize(800, 600)
         
         # Central Widget
@@ -582,7 +581,7 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         input_section = self.create_input_section()
         layout.addWidget(input_section)
         
-        # Enhanced Pipeline Status Section
+        # Compatible Pipeline Status Section (ohne Metadata)
         self.status_widget = PipelineStatusWidget()
         layout.addWidget(self.status_widget)
         
@@ -599,7 +598,7 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         self.config_button.setFont(QFont("Arial", 10))
         self.config_button.clicked.connect(self.show_config_window)
         
-        # ENHANCED: Stop Pipeline Button
+        # Stop Pipeline Button
         self.stop_button = QPushButton("Stop Pipeline")
         self.stop_button.setFixedHeight(50)
         self.stop_button.setFont(QFont("Arial", 10))
@@ -615,10 +614,10 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         # Status Bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready - Enhanced GUI loaded")
+        self.status_bar.showMessage("Ready")
     
     def create_input_section(self) -> QFrame:
-        """Erstellt Enhanced URL-Input-Sektion"""
+        """Erstellt URL-Input-Sektion"""
         frame = QFrame()
         frame.setFrameStyle(QFrame.StyledPanel)
         
@@ -645,13 +644,13 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         self.status_timer.start(1000)  # Fallback Timer für Mock-Mode
     
     def update_pipeline_status(self):
-        """Aktualisiert Pipeline-Status-Anzeige - nur Fallback für Mock-Mode"""
-        # ENHANCED: Only run timer updates if no real pipeline is connected
+        """Aktualisiert Pipeline-Status-Anzeige - nur Fallback"""
+        # Only run timer updates if no real pipeline is connected
         if not hasattr(self, 'pipeline_manager'):
-            # Fallback Mock-Update (nur wenn keine echte Pipeline)
+            # Fallback Mock-Update
             self.status_widget.update_status(self.pipeline_status)
         
-        # Enhanced Button-State Management
+        # Button-State Management
         if hasattr(self, 'pipeline_manager'):
             # Real pipeline mode
             pipeline_active = hasattr(self.pipeline_manager, 'state') and self.pipeline_manager.state.name == "RUNNING"
@@ -671,7 +670,7 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
             self.status_bar.showMessage("Ready")
     
     def start_analysis(self):
-        """Enhanced Startet YouTube-Analyse"""
+        """Startet YouTube-Analyse"""
         urls_text = self.url_input.toPlainText().strip()
         
         if not urls_text:
@@ -684,26 +683,25 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
             self.status_bar.showMessage("No valid URLs found")
             return
         
-        self.logger.info(f"Starting enhanced analysis for {len(urls)} URLs")
+        self.logger.info(f"Starting analysis for {len(urls)} URLs")
         
-        # ENHANCED: Check if real pipeline is available
+        # Check if real pipeline is available
         if hasattr(self, 'pipeline_manager') and PIPELINE_MANAGER_AVAILABLE:
             # Real pipeline will be called by integrate_pipeline_with_gui
-            self.logger.info("Using enhanced pipeline manager")
-            # The enhanced_start_analysis method will be set by integration
+            self.logger.info("Using real pipeline manager")
         else:
             # Fallback Mock-Demo
             self.logger.info("Using fallback mock pipeline demo")
             self.pipeline_status.audio_download_queue = len(urls)
             self.pipeline_status.total_queued = len(urls)
-            self.pipeline_status.current_stage = "Extracting Metadata"
+            self.pipeline_status.current_stage = "Audio Download"
             self.pipeline_status.pipeline_health = "healthy"
-            self.pipeline_status.active_workers = ["Metadata Extractor"]
+            self.pipeline_status.active_workers = ["Audio Download"]
         
-        self.status_bar.showMessage(f"Started enhanced analysis for {len(urls)} videos")
+        self.status_bar.showMessage(f"Started analysis for {len(urls)} videos")
     
     def stop_pipeline(self):
-        """Enhanced Stop Pipeline"""
+        """Stop Pipeline"""
         if hasattr(self, 'pipeline_manager'):
             self.logger.info("Stopping pipeline manager")
             self.pipeline_manager.stop_pipeline()
@@ -715,7 +713,7 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         self.status_bar.showMessage("Pipeline stopped")
     
     def show_config_window(self):
-        """Zeigt Enhanced Config-Validation-Fenster"""
+        """Zeigt Config-Validation-Fenster"""
         if self.config_window is None:
             self.config_window = ConfigValidationWindow(self)
         
@@ -723,7 +721,7 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         self.config_window.show()
     
     def apply_ocean_theme(self):
-        """Wendet Enhanced Ocean-Theme auf Hauptfenster an"""
+        """Wendet Ocean-Theme auf Hauptfenster an"""
         self.setStyleSheet(f"""
             QMainWindow {{
                 background-color: {OceanTheme.ABYSS};
@@ -792,11 +790,11 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         """)
 
 # =============================================================================
-# ENHANCED APPLICATION SETUP
+# APPLICATION SETUP
 # =============================================================================
 
 def setup_ocean_application(app: QApplication):
-    """Konfiguriert Enhanced Ocean-Theme für gesamte Anwendung"""
+    """Konfiguriert Ocean-Theme für gesamte Anwendung"""
     
     # Application-wide dark palette
     palette = QPalette()
@@ -824,20 +822,20 @@ def setup_ocean_application(app: QApplication):
     app.setPalette(palette)
 
 def main():
-    """Enhanced Hauptfunktion für GUI-Anwendung"""
+    """Hauptfunktion für GUI-Anwendung"""
     from logging_plus import setup_logging
     from yt_analyzer_config import SecureConfigManager
     
-    # Setup Enhanced Logging
+    # Setup Logging
     setup_logging("youtube_analyzer_gui", "INFO")
     logger = get_logger("main")
     
     # Create Application
     app = QApplication(sys.argv)
-    app.setApplicationName("YouTube Analyzer Enhanced")
-    app.setApplicationVersion("2.0")
+    app.setApplicationName("YouTube Analyzer")
+    app.setApplicationVersion("1.0")
     
-    # Setup Enhanced Ocean Theme
+    # Setup Ocean Theme
     setup_ocean_application(app)
     
     # Load Configuration
@@ -847,25 +845,25 @@ def main():
     # Create and show main window
     window = YouTubeAnalyzerMainWindow()
     
-    # ENHANCED: Integrate Pipeline if available
+    # Integrate Pipeline if available
     if isinstance(config_result, Ok) and PIPELINE_MANAGER_AVAILABLE:
         config = unwrap_ok(config_result)
-        logger.info("Integrating enhanced pipeline manager")
+        logger.info("Integrating pipeline manager")
         integrate_pipeline_with_gui(window, config)
-        window.status_bar.showMessage("Enhanced Pipeline ready - Configuration loaded successfully")
+        window.status_bar.showMessage("Pipeline ready - Configuration loaded successfully")
     elif isinstance(config_result, Ok):
-        logger.warning("Config loaded but pipeline manager not available - using fallback mode")
+        logger.warning("Config loaded but pipeline manager not available")
         window.status_bar.showMessage("Fallback mode - Configuration loaded, limited pipeline features")
     else:
         error = unwrap_err(config_result)
         logger.error(f"Configuration error: {error.message}")
         window.status_bar.showMessage(f"Configuration error: {error.message}")
-        window.start_button.setEnabled(False)  # Disable until config fixed
+        window.start_button.setEnabled(False)
     
     window.show()
     
     # Start event loop
-    logger.info("Starting enhanced GUI application")
+    logger.info("Starting GUI application")
     sys.exit(app.exec())
 
 if __name__ == "__main__":

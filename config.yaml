@@ -37,6 +37,7 @@ secrets:
   trilium_username: token
 storage:
   nextcloud_path: /YouTube-Archive
+  nextcloud_base_url: https://nextcloud.organiccircuitlab.com/remote.php/dav/files/steefen
   sqlite_path: data/youtube_analyzer.db
   trilium_parent_note: YouTube Knowledge Base
 whisper:
@@ -45,3 +46,4 @@ whisper:
   enabled: true
   language: null
   model: large-v3
+    
