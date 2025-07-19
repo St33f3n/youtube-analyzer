@@ -158,7 +158,7 @@ class YouTubeVideoDownloader:
                 
                 ydl_opts = {
                     # HIGHEST QUALITY: No limitations
-                    'format': 'best',  # Highest available quality
+                    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best',  # Highest available quality
                     'merge_output_format': video_format,  # Unified format
                     'outtmpl': str(output_path),
                     

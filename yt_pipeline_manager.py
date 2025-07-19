@@ -1,6 +1,6 @@
 """
 YouTube Analyzer - GUI-Compatible Pipeline Manager
-Vollständig kompatibel mit Enhanced GUI (ohne Metadata-Worker)
+Mit einmaliger Secret-Resolution beim Start für Thread-Safety
 """
 
 from __future__ import annotations
@@ -19,22 +19,21 @@ from PySide6.QtWidgets import QMessageBox
 from core_types import Result, Ok, Err, is_ok, unwrap_ok, unwrap_err, CoreError
 from yt_analyzer_core import ProcessObject, ProcessingQueue, ArchiveDatabase
 from logging_plus import get_logger
-from yt_analyzer_config import AppConfig
+from yt_analyzer_config import AppConfig, SecureConfigManager
 from yt_url_processor import process_urls_to_objects
 from yt_transcription_worker import transcribe_process_object
 from yt_audio_downloader import download_audio_for_process_object
 from yt_rulechain import analyze_process_object
 from yt_video_downloader import download_video_for_process_object
-from yt_nextcloud_uploader import upload_to_nextcloud_for_process_object
+from yt_nextcloud_uploader import upload_to_nextcloud_for_process_object_dict
 
 # =============================================================================
-# GUI-COMPATIBLE PIPELINE STATUS
+# GUI-COMPATIBLE PIPELINE STATUS (unchanged)
 # =============================================================================
 
 @dataclass
 class PipelineStatus:
     """GUI-Compatible Pipeline Status (ohne metadata_queue)"""
-    # FIXED: Korrekte Feldnamen für GUI-Kompatibilität (ohne metadata)
     audio_download_queue: int = 0
     transcription_queue: int = 0
     analysis_queue: int = 0
@@ -97,7 +96,7 @@ class BaseWorker(QThread):
         self.logger = get_logger(f"Worker-{stage_name}")
         self.should_stop = threading.Event()
         self.is_processing = False
-        self.current_object: Optional[ProcessObject] = None  # ADDED für GUI current_video
+        self.current_object: Optional[ProcessObject] = None
     
     def run(self):
         """Enhanced Worker-Loop mit Current-Object-Tracking"""
@@ -113,7 +112,7 @@ class BaseWorker(QThread):
                 
                 process_obj = unwrap_ok(obj_result)
                 self.is_processing = True
-                self.current_object = process_obj  # TRACK current object für GUI
+                self.current_object = process_obj
                 
                 # Update status
                 self.stage_status_changed.emit(self.stage_name, self.input_queue.size())
@@ -144,7 +143,7 @@ class BaseWorker(QThread):
                     self.processing_error.emit(process_obj, error.message)
                 
                 self.input_queue.task_done()
-                self.current_object = None  # CLEAR current object
+                self.current_object = None
                 self.is_processing = False
                 
             except Exception as e:
@@ -177,11 +176,11 @@ class BaseWorker(QThread):
             self.wait(5000)
 
 # =============================================================================
-# WORKER IMPLEMENTATIONS
+# WORKER IMPLEMENTATIONS - NUR Upload Worker geändert!
 # =============================================================================
 
 class AudioDownloadWorker(BaseWorker):
-    """Audio-Download Worker"""
+    """Audio-Download Worker - UNVERÄNDERT (keine Secrets)"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Audio Download", input_queue, output_queue)
@@ -197,7 +196,7 @@ class AudioDownloadWorker(BaseWorker):
         return "Transcription"
 
 class TranscriptionWorker(BaseWorker):
-    """Transcription Worker"""
+    """Transcription Worker - UNVERÄNDERT (keine Secrets)"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Transcription", input_queue, output_queue)
@@ -211,7 +210,7 @@ class TranscriptionWorker(BaseWorker):
         return "Analysis"
 
 class AnalysisWorker(BaseWorker):
-    """Analysis Worker - REAL Implementation"""
+    """Analysis Worker - UNVERÄNDERT (keine Secrets)"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Analysis", input_queue, output_queue)
@@ -232,7 +231,7 @@ class AnalysisWorker(BaseWorker):
         return "Video Download"
 
 class VideoDownloadWorker(BaseWorker):
-    """Video Download Worker - REAL Implementation"""
+    """Video Download Worker - UNVERÄNDERT (keine Secrets)"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Video Download", input_queue, output_queue)
@@ -248,25 +247,25 @@ class VideoDownloadWorker(BaseWorker):
         return "Upload"
 
 class UploadWorker(BaseWorker):
-    """Upload Worker - REAL Implementation"""
+    """Upload Worker - EINZIGER mit Config-Dict Support (braucht Secrets)"""
     
-    def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
+    def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config_dict: dict):
         super().__init__("Upload", input_queue, output_queue)
-        self.config = config
+        self.config_dict = config_dict  # ← Dict für Secrets
     
     def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
         self.logger.info(f"Starting Nextcloud upload: {obj.titel}")
-        return upload_to_nextcloud_for_process_object(obj, self.config)
+        return upload_to_nextcloud_for_process_object_dict(obj, self.config_dict)
     
     def get_next_stage_name(self) -> str:
         return "Processing"
 
 class ProcessingWorker(BaseWorker):
-    """Processing Worker (Mock)"""
+    """Processing Worker - Mock (könnte Trilium-Secrets brauchen)"""
     
-    def __init__(self, input_queue: ProcessingQueue, output_queue: Optional[ProcessingQueue], config: AppConfig):
+    def __init__(self, input_queue: ProcessingQueue, output_queue: Optional[ProcessingQueue], config_dict: dict):
         super().__init__("Processing", input_queue, output_queue)
-        self.config = config
+        self.config_dict = config_dict  # ← Dict für potentielle Trilium-Secrets
     
     def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
         time.sleep(0.5)  # Mock processing
@@ -279,11 +278,11 @@ class ProcessingWorker(BaseWorker):
         return "completed"
 
 # =============================================================================
-# GUI-COMPATIBLE PIPELINE MANAGER
+# GUI-COMPATIBLE PIPELINE MANAGER mit SECRET-RESOLUTION
 # =============================================================================
 
 class PipelineManager(QThread):
-    """GUI-Compatible Pipeline Manager"""
+    """GUI-Compatible Pipeline Manager mit einmaliger Secret-Resolution"""
     
     # Signals für GUI
     status_updated = Signal(PipelineStatus)
@@ -301,7 +300,10 @@ class PipelineManager(QThread):
         self.processing_errors: List[ProcessingError] = []
         self.completed_videos: List[ProcessObject] = []
         
-        # Queues (ohne metadata!)
+        # SECRETS BEIM START EINMALIG LADEN (nur für Upload + Processing)
+        self.resolved_config_dict = self._resolve_secrets_to_dict()
+        
+        # Queues
         self.queues = {
             "audio_download": ProcessingQueue("audio_download"),
             "transcription": ProcessingQueue("transcription"),
@@ -319,18 +321,75 @@ class PipelineManager(QThread):
         self.status_timer.timeout.connect(self.emit_status_update)
         self.status_timer.start(2000)
     
+    def _resolve_secrets_to_dict(self) -> dict:
+        """Lädt alle Secrets und erstellt vollständige Config-Dict"""
+        
+        # Config zu Dict konvertieren
+        config_dict = self.config.dict()
+        
+        # Secret Manager für einmalige Secret-Resolution
+        secret_manager = SecureConfigManager()
+        secret_manager.load_config()
+        
+        try:
+            # Initialize resolved_secrets dict
+            config_dict['resolved_secrets'] = {}
+            
+            # Trilium Secret laden (für Processing Worker)
+            trilium_token_result = secret_manager.get_trilium_token()
+            if isinstance(trilium_token_result, Ok):
+                config_dict['resolved_secrets']['trilium_token'] = unwrap_ok(trilium_token_result)
+                self.logger.info("✅ Trilium token resolved")
+            else:
+                error = unwrap_err(trilium_token_result)
+                self.logger.warning(f"⚠️ Trilium token resolution failed: {error.message}")
+                config_dict['resolved_secrets']['trilium_token'] = None
+            
+            # Nextcloud Secret laden (für Upload Worker)
+            nextcloud_password_result = secret_manager.get_nextcloud_password()
+            if isinstance(nextcloud_password_result, Ok):
+                config_dict['resolved_secrets']['nextcloud_password'] = unwrap_ok(nextcloud_password_result)
+                self.logger.info("✅ Nextcloud password resolved")
+            else:
+                error = unwrap_err(nextcloud_password_result)
+                self.logger.warning(f"⚠️ Nextcloud password resolution failed: {error.message}")
+                config_dict['resolved_secrets']['nextcloud_password'] = None
+            
+            self.logger.info(
+                f"✅ Secret resolution completed",
+                extra={
+                    'trilium_resolved': config_dict['resolved_secrets']['trilium_token'] is not None,
+                    'nextcloud_resolved': config_dict['resolved_secrets']['nextcloud_password'] is not None,
+                    'total_secrets': len([s for s in config_dict['resolved_secrets'].values() if s is not None])
+                }
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Critical error during secret resolution: {e}")
+            config_dict['resolved_secrets'] = {
+                'trilium_token': None,
+                'nextcloud_password': None
+            }
+        
+        return config_dict
+    
     def start_pipeline(self, urls_text: str) -> Result[None, CoreError]:
         """Startet Pipeline (Metadata synchron, dann Worker-Pipeline)"""
         if self.state != PipelineState.IDLE:
             return Err(CoreError("Pipeline already running"))
         
+        # Validate resolved secrets (kritisch nur für Upload)
+        resolved_secrets = self.resolved_config_dict.get('resolved_secrets', {})
+        if not resolved_secrets.get('nextcloud_password'):
+            return Err(CoreError("Nextcloud password not resolved - check keyring configuration"))
+        
         self.input_urls_text = urls_text
         self.processing_errors.clear()
         self.completed_videos.clear()
         
-        self.logger.info("Starting pipeline")
+        self.logger.info("Starting pipeline with resolved secrets")
         
-        # SYNCHRONE Metadata-Extraktion (kein Worker nötig!)
+        # SYNCHRONE Metadata-Extraktion
         objects_result = process_urls_to_objects(urls_text, self.config.processing.__dict__)
         
         if isinstance(objects_result, Err):
@@ -353,22 +412,22 @@ class PipelineManager(QThread):
         self.state = PipelineState.RUNNING
         self.start()  # Start QThread
         
-        self.logger.info(f"Pipeline started with {len(process_objects)} videos")
+        self.logger.info(f"Pipeline started with {len(process_objects)} videos and resolved secrets")
         return Ok(None)
     
     def setup_workers(self) -> Result[None, CoreError]:
-        """Simple Worker Setup"""
+        """Worker Setup - NUR Upload + Processing bekommen Config-Dict"""
         try:
             self.cleanup_workers()
             
-            # Direct worker creation - clear and simple
+            # Worker Setup: AppConfig für Worker ohne Secrets, Dict für Worker mit Secrets
             self.workers = [
-                AudioDownloadWorker(self.queues["audio_download"], self.queues["transcription"], self.config),
-                TranscriptionWorker(self.queues["transcription"], self.queues["analysis"], self.config),
-                AnalysisWorker(self.queues["analysis"], self.queues["video_download"], self.config),
-                VideoDownloadWorker(self.queues["video_download"], self.queues["upload"], self.config),
-                UploadWorker(self.queues["upload"], self.queues["processing"], self.config),
-                ProcessingWorker(self.queues["processing"], None, self.config)
+                AudioDownloadWorker(self.queues["audio_download"], self.queues["transcription"], self.config),       # ← AppConfig
+                TranscriptionWorker(self.queues["transcription"], self.queues["analysis"], self.config),             # ← AppConfig
+                AnalysisWorker(self.queues["analysis"], self.queues["video_download"], self.config),                 # ← AppConfig
+                VideoDownloadWorker(self.queues["video_download"], self.queues["upload"], self.config),              # ← AppConfig
+                UploadWorker(self.queues["upload"], self.queues["processing"], self.resolved_config_dict),           # ← Dict!
+                ProcessingWorker(self.queues["processing"], None, self.resolved_config_dict)                         # ← Dict!
             ]
             
             # Connect signals and start
@@ -378,7 +437,7 @@ class PipelineManager(QThread):
                 worker.stage_status_changed.connect(self.on_stage_status_changed)
                 worker.start()
             
-            self.logger.info(f"Started {len(self.workers)} workers")
+            self.logger.info(f"Started {len(self.workers)} workers (2 with resolved secrets)")
             return Ok(None)
             
         except Exception as e:
@@ -452,7 +511,7 @@ class PipelineManager(QThread):
                 eta_seconds = remaining_items * avg_processing_time
                 estimated_completion = datetime.now() + timedelta(seconds=eta_seconds)
         
-        # ENHANCED Status-Berechnung mit Worker-Activity
+        # Status-Berechnung mit Worker-Activity
         status = PipelineStatus(
             # Queue size + active worker (0 oder 1)
             audio_download_queue=self.queues["audio_download"].size() + (1 if any(w.stage_name == "Audio Download" and w.is_processing for w in self.workers) else 0),
@@ -477,7 +536,7 @@ class PipelineManager(QThread):
         
         self.status_updated.emit(status)
         
-        # Check if pipeline finished - BEIDE Bedingungen
+        # Check if pipeline finished
         all_queues_empty = not status.is_active()
         no_workers_active = len(active_workers_list) == 0
         
@@ -549,7 +608,7 @@ class PipelineManager(QThread):
             self.msleep(100)
 
 # =============================================================================
-# GUI INTEGRATION (Enhanced)
+# GUI INTEGRATION (unchanged)
 # =============================================================================
 
 def integrate_pipeline_with_gui(main_window, config: AppConfig):
