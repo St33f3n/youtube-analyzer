@@ -38,7 +38,7 @@ from yt_llm_processor import process_transcript_with_llm_dict
 
 @dataclass
 class PipelineStatus:
-    """Simple Pipeline Status für GUI - minimale Erweiterung"""
+    """Enhanced Pipeline Status mit vollständigen LLM-Metriken"""
     # Existing queue counters (unchanged)
     audio_download_queue: int = 0
     transcription_queue: int = 0
@@ -47,24 +47,39 @@ class PipelineStatus:
     upload_queue: int = 0
     processing_queue: int = 0
     
-    # NEW: Fork-Join queues (simple counts)
+    # Fork-join specific queues
     llm_processing_queue: int = 0
     trilium_upload_queue: int = 0
     
-    # Simple tracking (unchanged)
+    # Enhanced tracking
     total_queued: int = 0
     total_completed: int = 0
     total_failed: int = 0
     
-    # Current processing info (unchanged)
+    # Current processing info
     current_stage: str = "Idle"
     current_video: Optional[str] = None
     
-    # Basic features (unchanged)
+    # Basic features
     active_workers: List[str] = field(default_factory=list)
     pipeline_health: str = "healthy"
     estimated_completion: Optional[datetime] = None
     
+    # ✅ HINZUGEFÜGT: LLM-Metriken (fehlten vorher!)
+    total_llm_tokens: int = 0
+    total_llm_cost: float = 0.0
+    active_llm_provider: Optional[str] = None
+    
+    # ✅ HINZUGEFÜGT: Erweiterte LLM-Metriken
+    llm_videos_processed: int = 0
+    average_llm_processing_time: float = 0.0
+    
+    # ✅ HINZUGEFÜGT: Fork-Join spezifische Metriken
+    pending_merges: int = 0
+    video_stream_completed: int = 0
+    transcript_stream_completed: int = 0
+    final_archived: int = 0
+
     def is_active(self) -> bool:
         """Activity check including new fork-join queues"""
         return (self.audio_download_queue + self.transcription_queue + 
@@ -88,6 +103,104 @@ class PipelineState(Enum):
     RUNNING = "running"
     STOPPING = "stopping"
     FINISHED = "finished"
+
+
+# =============================================================================
+# LLM METRICS COLLECTOR (NEUE KLASSE)
+# =============================================================================
+
+class LLMMetricsCollector:
+    """Sammelt und verwaltet LLM-Metriken aus TranskriptObjects"""
+    
+    def __init__(self):
+        self.logger = get_logger("LLMMetricsCollector")
+        self.reset_metrics()
+    
+    def reset_metrics(self):
+        """Reset alle Metriken für neue Pipeline"""
+        self.total_tokens = 0
+        self.total_cost = 0.0
+        self.videos_processed = 0
+        self.processing_times = []
+        self.current_provider = None
+        self.cost_breakdown = {}  # {"openai": 0.15, "anthropic": 0.05}
+        self.token_breakdown = {}  # {"openai": 1500, "anthropic": 800}
+    
+    def add_transcript_metrics(self, transcript_obj: TranskriptObject):
+        """Fügt Metriken von erfolgreich verarbeitetem TranskriptObject hinzu"""
+        if not transcript_obj.success:
+            return
+        
+        # Basis-Metriken
+        if transcript_obj.tokens:
+            self.total_tokens += transcript_obj.tokens
+        
+        if transcript_obj.cost:
+            self.total_cost += transcript_obj.cost
+        
+        if transcript_obj.processing_time:
+            self.processing_times.append(transcript_obj.processing_time)
+        
+        if transcript_obj.model:
+            # Provider aus Model extrahieren
+            provider = self._extract_provider_from_model(transcript_obj.model)
+            self.current_provider = provider
+            
+            # Breakdown-Statistiken
+            if provider not in self.cost_breakdown:
+                self.cost_breakdown[provider] = 0.0
+                self.token_breakdown[provider] = 0
+            
+            if transcript_obj.cost:
+                self.cost_breakdown[provider] += transcript_obj.cost
+            if transcript_obj.tokens:
+                self.token_breakdown[provider] += transcript_obj.tokens
+        
+        self.videos_processed += 1
+        
+        self.logger.debug(
+            f"Added LLM metrics from {transcript_obj.titel}",
+            extra={
+                'tokens_added': transcript_obj.tokens,
+                'cost_added': transcript_obj.cost,
+                'total_tokens': self.total_tokens,
+                'total_cost': self.total_cost,
+                'videos_processed': self.videos_processed
+            }
+        )
+    
+    def _extract_provider_from_model(self, model: str) -> str:
+        """Extrahiert Provider-Namen aus Model-String"""
+        model_lower = model.lower()
+        if 'gpt' in model_lower or 'openai' in model_lower:
+            return 'openai'
+        elif 'claude' in model_lower or 'anthropic' in model_lower:
+            return 'anthropic'
+        elif 'gemini' in model_lower or 'google' in model_lower:
+            return 'google'
+        else:
+            return 'unknown'
+    
+    def get_average_processing_time(self) -> float:
+        """Berechnet durchschnittliche LLM-Verarbeitungszeit"""
+        if not self.processing_times:
+            return 0.0
+        return sum(self.processing_times) / len(self.processing_times)
+    
+    def get_metrics_summary(self) -> Dict[str, Any]:
+        """Gibt vollständige Metriken-Zusammenfassung zurück"""
+        return {
+            'total_tokens': self.total_tokens,
+            'total_cost': self.total_cost,
+            'videos_processed': self.videos_processed,
+            'average_processing_time': self.get_average_processing_time(),
+            'current_provider': self.current_provider,
+            'cost_breakdown': self.cost_breakdown.copy(),
+            'token_breakdown': self.token_breakdown.copy(),
+            'cost_per_video': self.total_cost / self.videos_processed if self.videos_processed > 0 else 0.0,
+            'tokens_per_video': self.total_tokens / self.videos_processed if self.videos_processed > 0 else 0.0
+        }
+
 
 # =============================================================================
 # ENHANCED BASE WORKER CLASS für Fork-Join
@@ -414,8 +527,17 @@ class PipelineManager(QThread):
         # NEW: Zentrale Secret-Resolution
         self.config_manager = SecureConfigManager()
         self.config_manager.load_config()
-        
+        self.llm_metrics = LLMMetricsCollector()       
         self.config_dict = self._resolve_config_dict()
+
+        self.stream_completion_stats = {
+            'video_completed': 0,
+            'transcript_completed': 0,
+            'final_archived': 0,
+            'video_failed': 0,
+            'transcript_failed': 0
+        }
+
         
         # Pipeline State
         self.state = PipelineState.IDLE
@@ -515,6 +637,17 @@ class PipelineManager(QThread):
         self.input_urls_text = urls_text
         self.processing_errors.clear()
         self.completed_videos.clear()
+
+
+        self.llm_metrics.reset_metrics()
+        self.stream_completion_stats = {
+            'video_completed': 0,
+            'transcript_completed': 0,
+            'final_archived': 0,
+            'video_failed': 0,
+            'transcript_failed': 0
+        }
+
         
         # Clear state collections
         with self.state_lock:
@@ -602,35 +735,44 @@ class PipelineManager(QThread):
             return Err(CoreError(f"Fork-Join worker setup failed: {e}"))
     
     def handle_worker_completion(self, obj: Union[ProcessObject, TranskriptObject], next_stage: str):
-        """Handles successful worker completion with Fork-Join-Logic"""
-        with self.state_lock:
-            if isinstance(obj, ProcessObject):
-                # Stream A completion
-                if next_stage == "stream_completed" or next_stage == "Stream A Completed":
-                    obj.video_stream_success = True
-                    self.process_video_completion(obj)
+            """Enhanced completion handler mit LLM-Metriken-Sammlung"""
+            with self.state_lock:
+                if isinstance(obj, ProcessObject):
+                    # Stream A completion
+                    if next_stage == "stream_completed" or next_stage == "Stream A Completed":
+                        obj.video_stream_success = True
+                        self.stream_completion_stats['video_completed'] += 1
+                        self.process_video_completion(obj)
                     
-            elif isinstance(obj, TranskriptObject):
-                # Stream B completion
-                if next_stage == "stream_completed" or next_stage == "Stream B Completed":
-                    obj.success = True
-                    self.process_transcript_completion(obj)
-    
+                elif isinstance(obj, TranskriptObject):
+                    # Stream B completion
+                    if next_stage == "stream_completed" or next_stage == "Stream B Completed":
+                        obj.success = True
+                        self.stream_completion_stats['transcript_completed'] += 1
+                    
+                        # ✅ HINZUGEFÜGT: LLM-Metriken sammeln
+                        self.llm_metrics.add_transcript_metrics(obj)
+                    
+                        self.process_transcript_completion(obj)
+                            
+
     def handle_worker_error(self, obj: Union[ProcessObject, TranskriptObject], error_message: str):
-        """Handles worker errors mit Fork-Join-Logic"""
-        with self.state_lock:
-            if isinstance(obj, ProcessObject):
-                # Stream A failure
-                obj.video_stream_success = False
-                if hasattr(obj, 'add_error'):
-                    obj.add_error(f"Video stream failed: {error_message}")
-                self.process_video_completion(obj)
+            """Enhanced error handler mit Stream-Statistiken"""
+            with self.state_lock:
+                if isinstance(obj, ProcessObject):
+                    # Stream A failure
+                    obj.video_stream_success = False
+                    self.stream_completion_stats['video_failed'] += 1
+                    if hasattr(obj, 'add_error'):
+                        obj.add_error(f"Video stream failed: {error_message}")
+                    self.process_video_completion(obj)
                 
-            elif isinstance(obj, TranskriptObject):
-                # Stream B failure
-                obj.success = False
-                obj.error_message = error_message
-                self.process_transcript_completion(obj)
+                elif isinstance(obj, TranskriptObject):
+                    # Stream B failure
+                    obj.success = False
+                    obj.error_message = error_message
+                    self.stream_completion_stats['transcript_failed'] += 1
+                    self.process_transcript_completion(obj)
     
     def process_video_completion(self, video_obj: ProcessObject):
         """Processes Stream A completion and attempts merging"""
@@ -703,25 +845,29 @@ class PipelineManager(QThread):
         # Create archive object with clean separation
         archive_obj = ArchivObject.from_process_and_transcript(video_obj, transcript_obj)
         
+        if archive_obj.final_success:
+            self.stream_completion_stats['final_archived'] += 1
+        
         # Direct archive insertion by Pipeline Manager
         archive_result = self.archive_database.save_processed_video(archive_obj)
         
         if isinstance(archive_result, Ok):
-            self.logger.info(
-                f"Video archived successfully: {archive_obj.titel}",
-                extra={
-                    'final_success': archive_obj.final_success,
-                    'video_stream_success': archive_obj.video_stream_success,
-                    'transcript_stream_success': archive_obj.transcript_stream_success,
-                    'llm_model': archive_obj.llm_model,
-                    'llm_cost': archive_obj.llm_cost,
-                    'has_nextcloud_link': bool(archive_obj.nextcloud_link),
-                    'has_trilium_link': bool(archive_obj.trilium_link)
-                }
-            )
+                    self.logger.info(
+                        f"Video archived successfully: {archive_obj.titel}",
+                        extra={
+                            'final_success': archive_obj.final_success,
+                            'video_stream_success': archive_obj.video_stream_success,
+                            'transcript_stream_success': archive_obj.transcript_stream_success,
+                            'llm_model': archive_obj.llm_model,
+                            'llm_cost': archive_obj.llm_cost,
+                            'llm_tokens': archive_obj.llm_tokens,
+                            'has_nextcloud_link': bool(archive_obj.nextcloud_link),
+                            'has_trilium_link': bool(archive_obj.trilium_link)
+                        }
+                    )
         else:
             self.logger.error(f"Archive failed for {archive_obj.titel}: {unwrap_err(archive_result).message}")
-        
+                
         return archive_obj
     
     def archive_final_object(self, archive_obj: ArchivObject):
@@ -734,70 +880,103 @@ class PipelineManager(QThread):
             self.video_completed.emit(archive_obj.titel, False)
         else:
             self.logger.error(f"Archive failed for failed analysis: {archive_obj.titel}")
-    
+
     def emit_status_update(self):
-        """Enhanced Status-Update with Fork-Join metrics"""
-        if self.state == PipelineState.IDLE:
-            return
+            """✅ KORRIGIERTE Status-Update mit vollständigen LLM-Metriken"""
+            if self.state == PipelineState.IDLE:
+                return
         
-        # Calculate active workers and current video
-        active_workers_list = []
-        current_video_title = None
+            # Calculate active workers and current video
+            active_workers_list = []
+            current_video_title = None
         
-        for worker in self.workers:
-            if worker.is_processing:
-                active_workers_list.append(worker.stage_name)
-                if worker.current_object and not current_video_title:
-                    current_video_title = worker.current_object.titel
+            for worker in self.workers:
+                if worker.is_processing:
+                    active_workers_list.append(worker.stage_name)
+                    if worker.current_object and not current_video_title:
+                        current_video_title = worker.current_object.titel
         
-        # Calculate pipeline health
-        total_errors = len(self.processing_errors)
-        total_processed = len(self.completed_videos) + total_errors
+            # Calculate pipeline health
+            total_errors = len(self.processing_errors)
+            total_processed = len(self.completed_videos) + total_errors
         
-        if total_processed == 0:
-            health = "healthy"
-        elif total_errors / total_processed > 0.3:  # > 30% error rate
-            health = "failed"
-        elif total_errors / total_processed > 0.1:  # > 10% error rate
-            health = "degraded"
-        else:
-            health = "healthy"
+            if total_processed == 0:
+                health = "healthy"
+            elif total_errors / total_processed > 0.3:  # > 30% error rate
+                health = "failed"
+            elif total_errors / total_processed > 0.1:  # > 10% error rate
+                health = "degraded"
+            else:
+                health = "healthy"
         
-        # Enhanced Status-Berechnung with active worker tracking
-        status = PipelineStatus(
-            # Queue sizes + active worker (0 or 1 per queue)
-            audio_download_queue=self.queues["audio_download"].size() + (1 if any(w.stage_name == "Audio Download" and w.is_processing for w in self.workers) else 0),
-            transcription_queue=self.queues["transcription"].size() + (1 if any(w.stage_name == "Transcription" and w.is_processing for w in self.workers) else 0),
-            analysis_queue=self.queues["analysis"].size() + (1 if any(w.stage_name == "Analysis" and w.is_processing for w in self.workers) else 0),
-            video_download_queue=self.queues["video_download"].size() + (1 if any(w.stage_name == "Video Download" and w.is_processing for w in self.workers) else 0),
-            upload_queue=self.queues["upload"].size() + (1 if any(w.stage_name == "Upload" and w.is_processing for w in self.workers) else 0),
-            processing_queue=0,  # Not used in Fork-Join
+            # ✅ HINZUGEFÜGT: LLM-Metriken aus Collector holen
+            llm_summary = self.llm_metrics.get_metrics_summary()
+        
+            # ✅ KORRIGIERT: Status-Berechnung mit allen LLM-Metriken
+            status = PipelineStatus(
+                # Queue sizes + active worker tracking
+                audio_download_queue=self.queues["audio_download"].size() + (1 if any(w.stage_name == "Audio Download" and w.is_processing for w in self.workers) else 0),
+                transcription_queue=self.queues["transcription"].size() + (1 if any(w.stage_name == "Transcription" and w.is_processing for w in self.workers) else 0),
+                analysis_queue=self.queues["analysis"].size() + (1 if any(w.stage_name == "Analysis" and w.is_processing for w in self.workers) else 0),
+                video_download_queue=self.queues["video_download"].size() + (1 if any(w.stage_name == "Video Download" and w.is_processing for w in self.workers) else 0),
+                upload_queue=self.queues["upload"].size() + (1 if any(w.stage_name == "Upload" and w.is_processing for w in self.workers) else 0),
+                processing_queue=0,  # Not used in Fork-Join
             
-            # NEW: Fork-Join queues
-            llm_processing_queue=self.queues["llm_processing"].size() + (1 if any(w.stage_name == "LLM Processing" and w.is_processing for w in self.workers) else 0),
-            trilium_upload_queue=self.queues["trilium_upload"].size() + (1 if any(w.stage_name == "Trilium Upload" and w.is_processing for w in self.workers) else 0),
+                # Fork-Join queues
+                llm_processing_queue=self.queues["llm_processing"].size() + (1 if any(w.stage_name == "LLM Processing" and w.is_processing for w in self.workers) else 0),
+                trilium_upload_queue=self.queues["trilium_upload"].size() + (1 if any(w.stage_name == "Trilium Upload" and w.is_processing for w in self.workers) else 0),
             
-            total_queued=self.get_total_objects_count(),
-            total_completed=len(self.completed_videos),
-            total_failed=len(self.processing_errors),
+                total_queued=self.get_total_objects_count(),
+                total_completed=len(self.completed_videos),
+                total_failed=len(self.processing_errors),
             
-            current_stage=self.get_current_stage(active_workers_list),
-            current_video=current_video_title[:30] + "..." if current_video_title and len(current_video_title) > 30 else current_video_title,
+                current_stage=self.get_current_stage(active_workers_list),
+                current_video=current_video_title[:30] + "..." if current_video_title and len(current_video_title) > 30 else current_video_title,
             
-            active_workers=active_workers_list,
-            pipeline_health=health
-        )
+                active_workers=active_workers_list,
+                pipeline_health=health,
+            
+                # ✅ HINZUGEFÜGT: Vollständige LLM-Metriken
+                total_llm_tokens=llm_summary['total_tokens'],
+                total_llm_cost=llm_summary['total_cost'],
+                active_llm_provider=llm_summary['current_provider'],
+                llm_videos_processed=llm_summary['videos_processed'],
+                average_llm_processing_time=llm_summary['average_processing_time'],
+            
+                # ✅ HINZUGEFÜGT: Fork-Join spezifische Metriken
+                pending_merges=(len(self.video_success_list) + len(self.video_failure_list) + 
+                               len(self.transcript_success_list) + len(self.transcript_failure_list)),
+                video_stream_completed=self.stream_completion_stats['video_completed'],
+                transcript_stream_completed=self.stream_completion_stats['transcript_completed'],
+                final_archived=self.stream_completion_stats['final_archived']
+            )
         
-        self.status_updated.emit(status)
+            self.status_updated.emit(status)
         
-        # Check if pipeline finished
-        all_queues_empty = not status.is_active()
-        no_workers_active = len(active_workers_list) == 0
-        no_pending_merges = (len(self.video_success_list) + len(self.video_failure_list) + 
-                           len(self.transcript_success_list) + len(self.transcript_failure_list)) == 0
+            # Enhanced Debug Logging mit LLM-Metriken
+            self.logger.debug(
+                f"GUI Status Update mit LLM-Metriken",
+                extra={
+                    'total_queued': status.total_queued,
+                    'sequential_active': status.audio_download_queue + status.transcription_queue + status.analysis_queue,
+                    'stream_a_active': status.video_download_queue + status.upload_queue,
+                    'stream_b_active': status.llm_processing_queue + status.trilium_upload_queue,
+                    'final_archived': status.final_archived,
+                    'llm_tokens': status.total_llm_tokens,
+                    'llm_cost': status.total_llm_cost,
+                    'llm_provider': status.active_llm_provider,
+                    'llm_videos_processed': status.llm_videos_processed,
+                    'pending_merges': status.pending_merges
+                }
+            )
         
-        if all_queues_empty and no_workers_active and no_pending_merges and self.state == PipelineState.RUNNING:
-            self.finish_pipeline()
+            # Check if pipeline finished (with pending merges check)
+            all_queues_empty = not status.is_active()
+            no_workers_active = len(active_workers_list) == 0
+            no_pending_merges = status.pending_merges == 0
+        
+            if all_queues_empty and no_workers_active and no_pending_merges and self.state == PipelineState.RUNNING:
+                self.finish_pipeline()
     
     def get_total_objects_count(self) -> int:
         """Gesamtzahl Objects in Pipeline"""
