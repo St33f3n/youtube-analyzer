@@ -130,6 +130,14 @@ class WhisperTranscriptionEngine:
             )
             return Err(CoreError(f"Failed to load Whisper model: {e}", context))
     
+    def _format_timestamp(self, seconds: float) -> str:
+            """Formatiert Timestamp in HH:MM:SS Format"""
+            total_seconds = int(round(seconds))
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            secs = total_seconds % 60
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
     @log_function(log_performance=True)
     def transcribe_audio(self, audio_path: Path, language: Optional[str] = None) -> Result[Tuple[str, str], CoreError]:
         """
@@ -194,16 +202,25 @@ class WhisperTranscriptionEngine:
                         },
                         initial_prompt=None                    # Kann später optimiert werden
                     )                
-                # Collect all segments
+                
+                # Collect all segments mit Timestamps
                 transcript_parts = []
                 total_duration = 0.0
                 
                 for segment in segments:
-                    transcript_parts.append(segment.text.strip())
+                    # Timestamp formatieren
+                    timestamp = self._format_timestamp(segment.start)
+                    segment_text = segment.text.strip()
+                    
+                    # Nur nicht-leere Segmente hinzufügen
+                    if segment_text:
+                        formatted_segment = f"[{timestamp}] {segment_text}"
+                        transcript_parts.append(formatted_segment)
+                    
                     total_duration = max(total_duration, segment.end)
                 
-                # Combine transcript
-                full_transcript = " ".join(transcript_parts).strip()
+                # Combine transcript mit Zeilenumbrüchen
+                full_transcript = "\n".join(transcript_parts)
                 detected_language = info.language
                 
                 feature.add_metric("transcript_length", len(full_transcript))
@@ -219,7 +236,7 @@ class WhisperTranscriptionEngine:
                     f"  ⏱️ Audio duration: {total_duration:.1f} seconds\n"
                     f"  🔧 Model: {self.config.whisper.model} on {self.config.whisper.device}\n"
                     f"  📊 Processing rate: {len(full_transcript) / total_duration:.1f} chars/sec\n"
-                    f"  🎙️ First 100 chars: {full_transcript[:100]}..."
+                    f"  🎙️ First 200 chars: {full_transcript[:200]}..."
                 )
                 
                 self.logger.info(transcription_info)
@@ -241,8 +258,7 @@ class WhisperTranscriptionEngine:
                     )
                     return Err(CoreError("No transcript generated (silent audio?)", context))
                 
-                return Ok((full_transcript, detected_language))
-        
+                return Ok((full_transcript, detected_language))        
         except FileNotFoundError:
             context = ErrorContext.create(
                 "transcribe_audio",
@@ -383,6 +399,7 @@ def transcribe_process_object(process_obj: ProcessObject, config: AppConfig) -> 
     
     # Update ProcessObject
     process_obj.transkript = transcript
+    print(transcript)
     process_obj.sprache = detected_language
     process_obj.update_stage("transcribed")
     

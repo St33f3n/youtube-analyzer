@@ -1,6 +1,6 @@
 """
-YouTube Analyzer - Compatible GUI without Metadata Worker
-Simple Interface mit Pipeline-Status-Anzeige (ohne Metadata-Anzeige)
+YouTube Analyzer - Corrected GUI with Fork-Join Architecture
+Korrekte Darstellung der Fork-Join Pipeline-Architektur
 """
 
 import sys
@@ -23,7 +23,7 @@ from yt_analyzer_core import ProcessObject  # For type hints
 from logging_plus import get_logger, log_feature
 from yt_analyzer_config import SecureConfigManager, AppConfig
 
-# FIXED: Import PipelineStatus from Pipeline Manager (no local definition)
+# Import PipelineStatus from Pipeline Manager
 try:
     from yt_pipeline_manager import PipelineStatus, integrate_pipeline_with_gui
     PIPELINE_MANAGER_AVAILABLE = True
@@ -39,7 +39,8 @@ except ImportError:
         analysis_queue: int = 0
         video_download_queue: int = 0
         upload_queue: int = 0
-        processing_queue: int = 0
+        llm_processing_queue: int = 0
+        trilium_upload_queue: int = 0
         
         total_queued: int = 0
         total_completed: int = 0
@@ -48,7 +49,6 @@ except ImportError:
         current_stage: str = "Idle"
         current_video: Optional[str] = None
         
-        # Enhanced fields (fallback)
         active_workers: List[str] = field(default_factory=list)
         pipeline_health: str = "healthy"
         estimated_completion: Optional[datetime] = None
@@ -56,255 +56,11 @@ except ImportError:
         def is_active(self) -> bool:
             return (self.audio_download_queue + self.transcription_queue + 
                    self.analysis_queue + self.video_download_queue + 
-                   self.upload_queue + self.processing_queue) > 0
+                   self.upload_queue + self.llm_processing_queue + 
+                   self.trilium_upload_queue) > 0
 
 # =============================================================================
-# OCEAN THEME COLORS
-# =============================================================================
-
-class OceanTheme:
-    """Ocean-themed color palette for dark UI"""
-    
-    # Primary Colors
-    DEEP_OCEAN = "#edf2f7"
-    OCEAN_CURRENT = "#e6e6e6"
-    SEA_FOAM = "#6b8e6b"
-    DEEP_TEAL = "#4a6b4a"
-    KELP_GREEN = "#3d5a3d"
-    
-    # Coral Accent Colors
-    CORAL_PINK = "#c4766a"
-    CORAL_ORANGE = "#d4634a"
-    CORAL_RED = "#c84a2c"
-    CORAL_LIGHT = "#d49284"
-    CORAL_DEEP = "#b85347"
-    
-    # Ocean Accent Colors
-    BIOLUMINESCENT = "#5a9a9a"
-    CORAL_BLUE = "#6b8db3"
-    ARCTIC_BLUE = "#8cb8e8"
-    DEEP_SAPPHIRE = "#4a5f7a"
-    MARINE_BLUE = "#5c7ba3"
-    
-    # Anthracite Neutral Colors
-    ABYSS = "#1e1e1e"
-    DEEP_WATER = "#262626"
-    MIDNIGHT = "#2e2e2e"
-    SURFACE = "#363636"
-    SEAFOAM_GRAY = "#8a9a8a"
-    
-    # Text Colors
-    TEXT_PRIMARY = "#f7f2e3"
-    TEXT_SECONDARY = "#e5dcc8"
-    TEXT_MUTED = "#c4b89f"
-    
-    # Special Colors
-    YELLOW = "#f0c674"
-    GOLDEN_BEIGE = "#d4c5a9"
-
-# =============================================================================
-# COMPATIBLE PIPELINE STATUS WIDGET (ohne Metadata)
-# =============================================================================
-
-class PipelineStatusWidget(QFrame):
-    """Compatible Pipeline-Status-Widget ohne Metadata-Anzeige"""
-    
-    def __init__(self):
-        super().__init__()
-        self.logger = get_logger("PipelineStatusWidget")
-        self.setup_ui()
-        self.apply_ocean_theme()
-    
-    def setup_ui(self):
-        """Setup UI ohne Metadata-Worker"""
-        self.setFrameStyle(QFrame.StyledPanel)
-        layout = QVBoxLayout(self)
-        
-        # Header
-        header = QLabel("Pipeline Status")
-        header.setAlignment(Qt.AlignCenter)
-        header.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        layout.addWidget(header)
-        
-        # Current Status
-        self.current_label = QLabel("Status: Idle")
-        self.current_label.setAlignment(Qt.AlignCenter)
-        self.current_label.setFont(QFont("Arial", 10))
-        layout.addWidget(self.current_label)
-        
-        # Queue Grid - FIXED: Ohne Metadata, Audio Download nach links verschoben
-        grid_layout = QGridLayout()
-        
-        # Queue Labels und Values
-        self.queue_labels = {}
-        self.queue_values = {}
-        
-        # FIXED: Neue Reihenfolge ohne Metadata
-        queue_mapping = [
-            # Linke Spalte (col=0)
-            ("Audio Download", "audio_download_queue", 0, 0),
-            ("Transcription", "transcription_queue", 1, 0), 
-            ("Analysis", "analysis_queue", 2, 0),
-            
-            # Rechte Spalte (col=2)  
-            ("Video Download", "video_download_queue", 0, 2),
-            ("Upload", "upload_queue", 1, 2),
-            ("Processing", "processing_queue", 2, 2)
-        ]
-        
-        for display_name, queue_attr, row, col in queue_mapping:
-            label = QLabel(f"{display_name}:")
-            value = QLabel("0")
-            value.setAlignment(Qt.AlignCenter)
-            value.setFont(QFont("Arial", 9, QFont.Weight.Bold))
-            
-            grid_layout.addWidget(label, row, col)
-            grid_layout.addWidget(value, row, col + 1)
-            
-            self.queue_labels[queue_attr] = label
-            self.queue_values[queue_attr] = value
-        
-        layout.addLayout(grid_layout)
-        
-        # Summary Stats
-        summary_layout = QHBoxLayout()
-        
-        self.total_label = QLabel("Total: 0")
-        self.completed_label = QLabel("Completed: 0")
-        self.failed_label = QLabel("Failed: 0")
-        
-        for label in [self.total_label, self.completed_label, self.failed_label]:
-            label.setAlignment(Qt.AlignCenter)
-            label.setFont(QFont("Arial", 9))
-            summary_layout.addWidget(label)
-        
-        layout.addLayout(summary_layout)
-        
-        # ENHANCED: Pipeline Health Indicator
-        self.health_label = QLabel("Health: Healthy")
-        self.health_label.setAlignment(Qt.AlignCenter)
-        self.health_label.setFont(QFont("Arial", 9, QFont.Weight.Bold))
-        layout.addWidget(self.health_label)
-        
-        # Current Video (if any)
-        self.video_label = QLabel("")
-        self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setFont(QFont("Arial", 8))
-        self.video_label.setWordWrap(True)
-        layout.addWidget(self.video_label)
-        
-        # ENHANCED: Active Workers Display
-        self.workers_label = QLabel("")
-        self.workers_label.setAlignment(Qt.AlignCenter)
-        self.workers_label.setFont(QFont("Arial", 8))
-        self.workers_label.setWordWrap(True)
-        layout.addWidget(self.workers_label)
-        
-        # ENHANCED: Estimated Completion Time
-        self.eta_label = QLabel("")
-        self.eta_label.setAlignment(Qt.AlignCenter)
-        self.eta_label.setFont(QFont("Arial", 8))
-        layout.addWidget(self.eta_label)
-    
-    def update_status(self, status: PipelineStatus):
-        """Enhanced Status-Update compatible mit Pipeline Manager"""
-        # Debug logging für Status-Updates
-        self.logger.debug(
-            f"GUI Status Update",
-            extra={
-                'total_queued': status.total_queued,
-                'total_completed': status.total_completed,
-                'total_failed': status.total_failed,
-                'current_stage': status.current_stage,
-                'active_workers': getattr(status, 'active_workers', []),
-                'pipeline_health': getattr(status, 'pipeline_health', 'unknown'),
-                'is_active': status.is_active()
-            }
-        )
-        
-        # Current Stage
-        self.current_label.setText(f"Status: {status.current_stage}")
-        
-        # Queue Values mit Color-Coding
-        for queue_attr, value_label in self.queue_values.items():
-            count = getattr(status, queue_attr, 0)
-            value_label.setText(str(count))
-            
-            # Color coding für aktive Queues
-            if count > 0:
-                value_label.setStyleSheet(f"color: {OceanTheme.BIOLUMINESCENT}; font-weight: bold;")
-            else:
-                value_label.setStyleSheet(f"color: {OceanTheme.TEXT_MUTED};")
-        
-        # Summary Stats mit Progress-Calculation
-        total_processed = status.total_completed + status.total_failed
-        
-        self.total_label.setText(f"Total: {status.total_queued}")
-        self.completed_label.setText(f"Completed: {status.total_completed}")
-        self.failed_label.setText(f"Failed: {status.total_failed}")
-        
-        # Enhanced progress display
-        if status.total_queued > 0:
-            progress_percent = total_processed / status.total_queued * 100
-            self.total_label.setText(f"Progress: {total_processed}/{status.total_queued} ({progress_percent:.1f}%)")
-        
-        # ENHANCED: Pipeline Health mit Color-Coding
-        pipeline_health = getattr(status, 'pipeline_health', 'unknown')
-        health_color = {
-            "healthy": OceanTheme.SEA_FOAM,
-            "degraded": OceanTheme.YELLOW, 
-            "failed": OceanTheme.CORAL_RED,
-            "unknown": OceanTheme.TEXT_MUTED
-        }.get(pipeline_health, OceanTheme.TEXT_MUTED)
-        
-        self.health_label.setText(f"Health: {pipeline_health.title()}")
-        self.health_label.setStyleSheet(f"color: {health_color}; font-weight: bold;")
-        
-        # Current Video mit enhanced Display
-        if status.current_video:
-            video_text = (f"Current: {status.current_video[:50]}..." 
-                         if len(status.current_video) > 50 
-                         else f"Current: {status.current_video}")
-            self.video_label.setText(video_text)
-            self.video_label.setStyleSheet(f"color: {OceanTheme.ARCTIC_BLUE};")
-        else:
-            self.video_label.setText("")
-        
-        # ENHANCED: Active Workers Display
-        active_workers = getattr(status, 'active_workers', [])
-        if active_workers:
-            workers_text = f"Active: {', '.join(active_workers)}"
-            self.workers_label.setText(workers_text)
-            self.workers_label.setStyleSheet(f"color: {OceanTheme.BIOLUMINESCENT};")
-        else:
-            self.workers_label.setText("")
-        
-        # ENHANCED: Estimated Completion Time
-        estimated_completion = getattr(status, 'estimated_completion', None)
-        if estimated_completion:
-            eta_text = f"ETA: {estimated_completion.strftime('%H:%M:%S')}"
-            self.eta_label.setText(eta_text)
-            self.eta_label.setStyleSheet(f"color: {OceanTheme.GOLDEN_BEIGE};")
-        else:
-            self.eta_label.setText("")
-    
-    def apply_ocean_theme(self):
-        """Wendet Ocean-Theme auf Widget an"""
-        self.setStyleSheet(f"""
-            QFrame {{
-                background-color: {OceanTheme.DEEP_WATER};
-                border: 2px solid {OceanTheme.SURFACE};
-                border-radius: 8px;
-                padding: 10px;
-            }}
-            QLabel {{
-                color: {OceanTheme.TEXT_PRIMARY};
-                background: transparent;
-            }}
-        """)
-
-# =============================================================================
-# CONFIG VALIDATION WINDOW (unchanged)
+# CONFIG VALIDATION WINDOW (vollständige Implementation)
 # =============================================================================
 
 class ConfigValidationWindow(QDialog):
@@ -410,7 +166,9 @@ class ConfigValidationWindow(QDialog):
         """Lädt und validiert Konfiguration"""
         # Clear existing items
         for i in reversed(range(self.config_layout.count())):
-            self.config_layout.itemAt(i).widget().setParent(None)
+            child = self.config_layout.itemAt(i).widget()
+            if child:
+                child.setParent(None)
         
         # Load Config
         config_result = self.config_manager.load_config()
@@ -428,12 +186,31 @@ class ConfigValidationWindow(QDialog):
         self.add_validation_item("Configuration Loading", "✅ SUCCESS")
         
         # Validate Secrets
+        self.validate_secrets(config)
+        
+        # Validate Rules
+        self.validate_rules(config)
+        
+        # Validate Processing Settings
+        self.validate_processing_settings(config)
+        
+        # Validate LLM Settings (NEW)
+        self.validate_llm_settings(config)
+        
+        # Add stretch to push items to top
+        self.config_layout.addStretch()
+    
+    def validate_secrets(self, config):
+        """Validiert Secret-Zugriff mit korrekten SecureConfigManager Methoden"""
+        
+        # Trilium Secret
         trilium_result = self.config_manager.get_trilium_token()
         if isinstance(trilium_result, Err):
+            error = unwrap_err(trilium_result)
             self.add_validation_item(
                 "Trilium Secret Access",
                 "❌ FAILED",
-                f"Service: {config.secrets.trilium_service}, User: {config.secrets.trilium_username}",
+                f"Service: {config.secrets.trilium_service}, Username: {config.secrets.trilium_username}\nError: {error.message}",
                 is_error=True
             )
         else:
@@ -441,15 +218,17 @@ class ConfigValidationWindow(QDialog):
             self.add_validation_item(
                 "Trilium Secret Access",
                 "✅ SUCCESS",
-                f"Token length: {len(token)} chars"
+                f"Token length: {len(token)} characters"
             )
         
+        # Nextcloud Secret
         nextcloud_result = self.config_manager.get_nextcloud_password()
         if isinstance(nextcloud_result, Err):
+            error = unwrap_err(nextcloud_result)
             self.add_validation_item(
                 "Nextcloud Secret Access",
                 "❌ FAILED",
-                f"Service: {config.secrets.nextcloud_service}, User: {config.secrets.nextcloud_username}",
+                f"Service: {config.secrets.nextcloud_service}, Username: {config.secrets.nextcloud_username}\nError: {error.message}",
                 is_error=True
             )
         else:
@@ -457,60 +236,148 @@ class ConfigValidationWindow(QDialog):
             self.add_validation_item(
                 "Nextcloud Secret Access",
                 "✅ SUCCESS",
-                f"Password length: {len(password)} chars"
+                f"Password length: {len(password)} characters"
             )
         
-        # Validate Rule Files
-        enabled_rules = config.rules.get_enabled_rules()
-        for rule_name, rule_config in enabled_rules.items():
-            rule_path = Path(rule_config.file)
-            if rule_path.exists():
+        # LLM API Keys mit den speziellen Methoden
+        llm_methods = {
+            'openai': self.config_manager.get_openai_api_key,
+            'anthropic': self.config_manager.get_anthropic_api_key,
+            'google': self.config_manager.get_google_api_key
+        }
+        
+        for provider, method in llm_methods.items():
+            try:
+                key_result = method()
+                if isinstance(key_result, Err):
+                    error = unwrap_err(key_result)
+                    # Get service info from config for better error messages
+                    service_attr = f"{provider}_service"
+                    username_attr = f"{provider}_username"
+                    service_name = getattr(config.secrets, service_attr, f"{provider}_service")
+                    username = getattr(config.secrets, username_attr, "api_key")
+                    
+                    self.add_validation_item(
+                        f"{provider.title()} API Key",
+                        "❌ NOT FOUND",
+                        f"Service: {service_name}, Username: {username}\nError: {error.message}",
+                        is_error=True
+                    )
+                else:
+                    api_key = unwrap_ok(key_result)
+                    self.add_validation_item(
+                        f"{provider.title()} API Key",
+                        "✅ FOUND",
+                        f"Key length: {len(api_key)} characters"
+                    )
+            except AttributeError:
+                # Method doesn't exist - this provider not configured
                 self.add_validation_item(
-                    f"Rule: {rule_name}",
+                    f"{provider.title()} API Key",
+                    "⚠️ NOT CONFIGURED",
+                    f"Add {provider}_service and {provider}_username to secrets section"
+                )
+    
+    def validate_rules(self, config):
+        """Validiert Rule-Chain-Konfiguration"""
+        try:
+            from yt_rulechain import load_rules_from_config
+            
+            rules_result = load_rules_from_config(config)
+            if isinstance(rules_result, Err):
+                self.add_validation_item(
+                    "Rules Configuration",
+                    "❌ FAILED",
+                    str(unwrap_err(rules_result).message),
+                    is_error=True
+                )
+                return
+            
+            rules = unwrap_ok(rules_result)
+            enabled_rules = [rule for rule in rules if rule.enabled]
+            total_weight = sum(rule.weight for rule in enabled_rules)
+            
+            self.add_validation_item(
+                "Rules Configuration",
+                "✅ VALID",
+                f"Enabled rules: {len(enabled_rules)}, Total weight: {total_weight:.2f}"
+            )
+            
+        except ImportError:
+            self.add_validation_item(
+                "Rules Configuration",
+                "⚠️ UNAVAILABLE",
+                "Rule chain module not available",
+                is_error=False
+            )
+    
+    def validate_processing_settings(self, config):
+        """Validiert Processing-Einstellungen"""
+        # Temp Folder
+        temp_path = Path(config.processing.temp_folder)
+        if temp_path.exists() and temp_path.is_dir():
+            self.add_validation_item(
+                "Temp Folder",
+                "✅ VALID",
+                f"Path: {temp_path}"
+            )
+        else:
+            self.add_validation_item(
+                "Temp Folder",
+                "❌ NOT FOUND",
+                f"Path: {temp_path}",
+                is_error=True
+            )
+        
+        # Whisper Settings
+        if config.whisper.enabled:
+            self.add_validation_item(
+                "Whisper Transcription",
+                "✅ ENABLED",
+                f"Model: {config.whisper.model}, Language: {config.whisper.language}"
+            )
+        else:
+            self.add_validation_item(
+                "Whisper Transcription",
+                "⚠️ DISABLED",
+                "Transcription will be mocked"
+            )
+    
+    def validate_llm_settings(self, config):
+        """Validiert LLM-Einstellungen (NEW)"""
+        if hasattr(config, 'llm_processing'):
+            provider = config.llm_processing.provider
+            model = config.llm_processing.model
+            prompt_file = Path(config.llm_processing.system_prompt_file)
+            
+            self.add_validation_item(
+                "LLM Configuration",
+                "✅ CONFIGURED",
+                f"Provider: {provider}, Model: {model}"
+            )
+            
+            # System Prompt File
+            if prompt_file.exists():
+                prompt_content = prompt_file.read_text(encoding='utf-8')
+                self.add_validation_item(
+                    "LLM System Prompt",
                     "✅ FOUND",
-                    f"Weight: {rule_config.weight}, Path: {rule_config.file}"
+                    f"File: {prompt_file}, Length: {len(prompt_content)} characters"
                 )
             else:
                 self.add_validation_item(
-                    f"Rule: {rule_name}",
-                    "❌ MISSING",
-                    f"File not found: {rule_config.file}",
+                    "LLM System Prompt",
+                    "❌ NOT FOUND",
+                    f"File: {prompt_file}",
                     is_error=True
                 )
-        
-        # Validate Directories
-        temp_dir = Path(config.processing.temp_folder)
-        if temp_dir.exists():
-            self.add_validation_item("Temp Directory", "✅ EXISTS", str(temp_dir))
         else:
             self.add_validation_item(
-                "Temp Directory",
-                "⚠️ MISSING",
-                f"Will be created: {temp_dir}"
+                "LLM Configuration",
+                "❌ NOT CONFIGURED",
+                "Add llm_processing section to config.yaml",
+                is_error=True
             )
-        
-        # Pipeline Manager Availability Check
-        if PIPELINE_MANAGER_AVAILABLE:
-            self.add_validation_item(
-                "Pipeline Manager",
-                "✅ AVAILABLE",
-                "Enhanced pipeline with state management"
-            )
-        else:
-            self.add_validation_item(
-                "Pipeline Manager",
-                "⚠️ FALLBACK",
-                "Using fallback mode - some features limited",
-                is_error=False
-            )
-        
-        # Config Summary
-        total_weight = config.rules.get_total_weight()
-        self.add_validation_item(
-            "Rules Configuration",
-            "✅ VALID",
-            f"Enabled rules: {len(enabled_rules)}, Total weight: {total_weight:.2f}"
-        )
     
     def apply_ocean_theme(self):
         """Wendet Ocean-Theme an"""
@@ -542,50 +409,520 @@ class ConfigValidationWindow(QDialog):
         """)
 
 # =============================================================================
-# MAIN WINDOW (Compatible)
+# OCEAN THEME COLORS
 # =============================================================================
 
-class YouTubeAnalyzerMainWindow(QMainWindow):
-    """Compatible Haupt-Fenster ohne Metadata-Worker"""
+class OceanTheme:
+    """Ocean-themed color palette for dark UI"""
+    
+    # Primary Colors
+    DEEP_OCEAN = "#edf2f7"
+    OCEAN_CURRENT = "#e6e6e6"
+    SEA_FOAM = "#6b8e6b"
+    DEEP_TEAL = "#4a6b4a"
+    KELP_GREEN = "#3d5a3d"
+    
+    # Coral Accent Colors
+    CORAL_PINK = "#c4766a"
+    CORAL_ORANGE = "#d4634a"
+    CORAL_RED = "#c84a2c"
+    CORAL_LIGHT = "#d49284"
+    CORAL_DEEP = "#b85347"
+    
+    # Ocean Accent Colors
+    BIOLUMINESCENT = "#5a9a9a"
+    CORAL_BLUE = "#6b8db3"
+    ARCTIC_BLUE = "#8cb8e8"
+    DEEP_SAPPHIRE = "#4a5f7a"
+    MARINE_BLUE = "#5c7ba3"
+    
+    # Anthracite Neutral Colors
+    ABYSS = "#1e1e1e"
+    DEEP_WATER = "#262626"
+    MIDNIGHT = "#2e2e2e"
+    SURFACE = "#363636"
+    SEAFOAM_GRAY = "#8a9a8a"
+    
+    # Text Colors
+    TEXT_PRIMARY = "#f7f2e3"
+    TEXT_SECONDARY = "#e5dcc8"
+    TEXT_MUTED = "#c4b89f"
+    
+    # Special Colors
+    YELLOW = "#f0c674"
+    GOLDEN_BEIGE = "#d4c5a9"
+
+# =============================================================================
+# CORRECTED PIPELINE STATUS WIDGET (Fork-Join Architecture)
+# =============================================================================
+
+class PipelineStatusWidget(QFrame):
+    """Corrected Pipeline Status Widget mit korrekter Fork-Join Darstellung"""
     
     def __init__(self):
         super().__init__()
-        self.logger = get_logger("MainWindow")
-        self.pipeline_status = PipelineStatus()  # Fallback status
-        self.config_window = None
+        self.logger = get_logger("PipelineStatusWidget")
+        self.setup_ui()
+        self.apply_ocean_theme()
+    
+    def setup_ui(self):
+        """Setup UI entsprechend echter Fork-Join Architektur"""
+        self.setFrameStyle(QFrame.StyledPanel)
+        layout = QVBoxLayout(self)
+        
+        # Header
+        header = QLabel("Pipeline Status")
+        header.setAlignment(Qt.AlignCenter)
+        header.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        layout.addWidget(header)
+        
+        # Current Status
+        self.current_label = QLabel("Status: Idle")
+        self.current_label.setAlignment(Qt.AlignCenter)
+        self.current_label.setFont(QFont("Arial", 10))
+        layout.addWidget(self.current_label)
+        
+        # SECTION 1: Sequential Pipeline (bis Fork-Point)
+        self.setup_sequential_pipeline(layout)
+        
+        # SECTION 2: Parallel Streams (nach Fork)
+        self.setup_parallel_streams(layout)
+        
+        # SECTION 3: LLM Metrics
+        self.setup_llm_metrics(layout)
+        
+        # SECTION 4: Final Results (vereinfacht)
+        self.setup_final_results(layout)
+        
+        # SECTION 5: System Status
+        self.setup_system_status(layout)
+    
+    def setup_sequential_pipeline(self, layout):
+        """Sequential Pipeline: Audio → Trans → Analysis (bis Fork-Point)"""
+        sequential_frame = QFrame()
+        sequential_frame.setFrameStyle(QFrame.StyledPanel)
+        sequential_layout = QVBoxLayout(sequential_frame)
+        
+        # Title
+        title = QLabel("Sequential Pipeline")
+        title.setAlignment(Qt.AlignCenter)
+        title.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        sequential_layout.addWidget(title)
+        
+        # Horizontal Flow: Audio → Trans → Analysis
+        flow_layout = QHBoxLayout()
+        
+        # Audio Download
+        audio_layout = QVBoxLayout()
+        audio_layout.addWidget(QLabel("Audio Download"))
+        self.audio_download_value = QLabel("0")
+        self.audio_download_value.setAlignment(Qt.AlignCenter)
+        self.audio_download_value.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        audio_layout.addWidget(self.audio_download_value)
+        flow_layout.addLayout(audio_layout)
+        
+        # Arrow
+        flow_layout.addWidget(QLabel("→"))
+        
+        # Transcription
+        trans_layout = QVBoxLayout()
+        trans_layout.addWidget(QLabel("Transcription"))
+        self.transcription_value = QLabel("0")
+        self.transcription_value.setAlignment(Qt.AlignCenter)
+        self.transcription_value.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        trans_layout.addWidget(self.transcription_value)
+        flow_layout.addLayout(trans_layout)
+        
+        # Arrow
+        flow_layout.addWidget(QLabel("→"))
+        
+        # Analysis (Fork Point)
+        analysis_layout = QVBoxLayout()
+        analysis_layout.addWidget(QLabel("Analysis"))
+        self.analysis_value = QLabel("0")
+        self.analysis_value.setAlignment(Qt.AlignCenter)
+        self.analysis_value.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        analysis_layout.addWidget(self.analysis_value)
+        flow_layout.addLayout(analysis_layout)
+        
+        sequential_layout.addLayout(flow_layout)
+        layout.addWidget(sequential_frame)
+    
+    def setup_parallel_streams(self, layout):
+        """Parallel Streams nach Fork-Point"""
+        streams_frame = QFrame()
+        streams_frame.setFrameStyle(QFrame.StyledPanel)
+        streams_layout = QVBoxLayout(streams_frame)
+        
+        # Title
+        title = QLabel("🔀 Parallel Streams (after Fork)")
+        title.setAlignment(Qt.AlignCenter)
+        title.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        streams_layout.addWidget(title)
+        
+        # Horizontal Layout für beide Streams
+        streams_horizontal = QHBoxLayout()
+        
+        # Stream A: Video Processing
+        stream_a_frame = QFrame()
+        stream_a_frame.setFrameStyle(QFrame.Box)
+        stream_a_layout = QVBoxLayout(stream_a_frame)
+        
+        stream_a_title = QLabel("🎥 Stream A (Video)")
+        stream_a_title.setAlignment(Qt.AlignCenter)
+        stream_a_title.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+        stream_a_layout.addWidget(stream_a_title)
+        
+        # Video Download → Upload
+        video_flow = QHBoxLayout()
+        
+        video_dl_layout = QVBoxLayout()
+        video_dl_layout.addWidget(QLabel("Video Download"))
+        self.video_download_value = QLabel("0")
+        self.video_download_value.setAlignment(Qt.AlignCenter)
+        self.video_download_value.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        video_dl_layout.addWidget(self.video_download_value)
+        video_flow.addLayout(video_dl_layout)
+        
+        video_flow.addWidget(QLabel("→"))
+        
+        upload_layout = QVBoxLayout()
+        upload_layout.addWidget(QLabel("Upload"))
+        self.upload_value = QLabel("0")
+        self.upload_value.setAlignment(Qt.AlignCenter)
+        self.upload_value.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        upload_layout.addWidget(self.upload_value)
+        video_flow.addLayout(upload_layout)
+        
+        stream_a_layout.addLayout(video_flow)
+        streams_horizontal.addWidget(stream_a_frame)
+        
+        # Stream B: LLM Processing
+        stream_b_frame = QFrame()
+        stream_b_frame.setFrameStyle(QFrame.Box)
+        stream_b_layout = QVBoxLayout(stream_b_frame)
+        
+        stream_b_title = QLabel("📄 Stream B (Transcript)")
+        stream_b_title.setAlignment(Qt.AlignCenter)
+        stream_b_title.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+        stream_b_layout.addWidget(stream_b_title)
+        
+        # LLM Processing → Trilium Upload
+        llm_flow = QHBoxLayout()
+        
+        llm_layout = QVBoxLayout()
+        llm_layout.addWidget(QLabel("LLM Processing"))
+        self.llm_processing_value = QLabel("0")
+        self.llm_processing_value.setAlignment(Qt.AlignCenter)
+        self.llm_processing_value.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        llm_layout.addWidget(self.llm_processing_value)
+        llm_flow.addLayout(llm_layout)
+        
+        llm_flow.addWidget(QLabel("→"))
+        
+        trilium_layout = QVBoxLayout()
+        trilium_layout.addWidget(QLabel("Trilium Upload"))
+        self.trilium_upload_value = QLabel("0")
+        self.trilium_upload_value.setAlignment(Qt.AlignCenter)
+        self.trilium_upload_value.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        trilium_layout.addWidget(self.trilium_upload_value)
+        llm_flow.addLayout(trilium_layout)
+        
+        stream_b_layout.addLayout(llm_flow)
+        streams_horizontal.addWidget(stream_b_frame)
+        
+        streams_layout.addLayout(streams_horizontal)
+        layout.addWidget(streams_frame)
+    
+    def setup_llm_metrics(self, layout):
+        """LLM Metrics Panel"""
+        llm_frame = QFrame()
+        llm_frame.setFrameStyle(QFrame.StyledPanel)
+        llm_layout = QVBoxLayout(llm_frame)
+        
+        # Title
+        title = QLabel("🤖 LLM Metrics")
+        title.setAlignment(Qt.AlignCenter)
+        title.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        llm_layout.addWidget(title)
+        
+        # Metrics Grid
+        metrics_grid = QGridLayout()
+        
+        # Provider
+        metrics_grid.addWidget(QLabel("Provider:"), 0, 0)
+        self.llm_provider_value = QLabel("None")
+        self.llm_provider_value.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+        metrics_grid.addWidget(self.llm_provider_value, 0, 1)
+        
+        # Total Tokens
+        metrics_grid.addWidget(QLabel("Tokens:"), 0, 2)
+        self.llm_tokens_value = QLabel("0")
+        self.llm_tokens_value.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+        metrics_grid.addWidget(self.llm_tokens_value, 0, 3)
+        
+        # Total Cost
+        metrics_grid.addWidget(QLabel("Cost:"), 1, 0)
+        self.llm_cost_value = QLabel("$0.000")
+        self.llm_cost_value.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+        metrics_grid.addWidget(self.llm_cost_value, 1, 1)
+        
+        # Average Processing Time
+        metrics_grid.addWidget(QLabel("Avg Time:"), 1, 2)
+        self.llm_avg_time_value = QLabel("0.0s")
+        self.llm_avg_time_value.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+        metrics_grid.addWidget(self.llm_avg_time_value, 1, 3)
+        
+        llm_layout.addLayout(metrics_grid)
+        layout.addWidget(llm_frame)
+    
+    def setup_final_results(self, layout):
+        """Final Results - Vereinfachte Anzeige"""
+        results_frame = QFrame()
+        results_frame.setFrameStyle(QFrame.StyledPanel)
+        results_layout = QVBoxLayout(results_frame)
+        
+        # Title
+        title = QLabel("📊 Final Results")
+        title.setAlignment(Qt.AlignCenter)
+        title.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        results_layout.addWidget(title)
+        
+        # Results Grid
+        results_grid = QGridLayout()
+        
+        # Total Archived Successfully
+        results_grid.addWidget(QLabel("Total Archived:"), 0, 0)
+        self.total_archived_value = QLabel("0")
+        self.total_archived_value.setAlignment(Qt.AlignCenter)
+        self.total_archived_value.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        results_grid.addWidget(self.total_archived_value, 0, 1)
+        
+        # Failed at Stream A
+        results_grid.addWidget(QLabel("Failed Stream A:"), 1, 0)
+        self.failed_stream_a_value = QLabel("0")
+        self.failed_stream_a_value.setAlignment(Qt.AlignCenter)
+        self.failed_stream_a_value.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        results_grid.addWidget(self.failed_stream_a_value, 1, 1)
+        
+        # Failed at Stream B
+        results_grid.addWidget(QLabel("Failed Stream B:"), 2, 0)
+        self.failed_stream_b_value = QLabel("0")
+        self.failed_stream_b_value.setAlignment(Qt.AlignCenter)
+        self.failed_stream_b_value.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        results_grid.addWidget(self.failed_stream_b_value, 2, 1)
+        
+        results_layout.addLayout(results_grid)
+        layout.addWidget(results_frame)
+    
+    def setup_system_status(self, layout):
+        """System Status (unverändert)"""
+        # Pipeline Health
+        self.health_label = QLabel("Health: Healthy")
+        self.health_label.setAlignment(Qt.AlignCenter)
+        self.health_label.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+        layout.addWidget(self.health_label)
+        
+        # Current Video
+        self.video_label = QLabel("")
+        self.video_label.setAlignment(Qt.AlignCenter)
+        self.video_label.setFont(QFont("Arial", 8))
+        self.video_label.setWordWrap(True)
+        layout.addWidget(self.video_label)
+        
+        # Active Workers
+        self.workers_label = QLabel("")
+        self.workers_label.setAlignment(Qt.AlignCenter)
+        self.workers_label.setFont(QFont("Arial", 8))
+        self.workers_label.setWordWrap(True)
+        layout.addWidget(self.workers_label)
+        
+        # ETA
+        self.eta_label = QLabel("")
+        self.eta_label.setAlignment(Qt.AlignCenter)
+        self.eta_label.setFont(QFont("Arial", 8))
+        layout.addWidget(self.eta_label)
+    
+    def update_status(self, status: PipelineStatus):
+        """Update Status mit korrekter Fork-Join Logik"""
+        
+        # Sequential Pipeline Updates
+        self.audio_download_value.setText(str(getattr(status, 'audio_download_queue', 0)))
+        self.transcription_value.setText(str(getattr(status, 'transcription_queue', 0)))
+        self.analysis_value.setText(str(getattr(status, 'analysis_queue', 0)))
+        
+        # Stream A (Video) Updates
+        self.video_download_value.setText(str(getattr(status, 'video_download_queue', 0)))
+        self.upload_value.setText(str(getattr(status, 'upload_queue', 0)))
+        
+        # Stream B (LLM) Updates
+        self.llm_processing_value.setText(str(getattr(status, 'llm_processing_queue', 0)))
+        self.trilium_upload_value.setText(str(getattr(status, 'trilium_upload_queue', 0)))
+        
+        # Color-coding für aktive Queues
+        for queue_attr, value_widget in [
+            ('audio_download_queue', self.audio_download_value),
+            ('transcription_queue', self.transcription_value),
+            ('analysis_queue', self.analysis_value),
+            ('video_download_queue', self.video_download_value),
+            ('upload_queue', self.upload_value),
+            ('llm_processing_queue', self.llm_processing_value),
+            ('trilium_upload_queue', self.trilium_upload_value)
+        ]:
+            count = getattr(status, queue_attr, 0)
+            if count > 0:
+                value_widget.setStyleSheet(f"color: {OceanTheme.BIOLUMINESCENT}; font-weight: bold;")
+            else:
+                value_widget.setStyleSheet(f"color: {OceanTheme.TEXT_MUTED};")
+        
+        # LLM Metrics Updates
+        self.llm_provider_value.setText(getattr(status, 'active_llm_provider', 'None'))
+        self.llm_tokens_value.setText(f"{getattr(status, 'total_llm_tokens', 0):,}")
+        self.llm_cost_value.setText(f"${getattr(status, 'total_llm_cost', 0.0):.3f}")
+        
+        # Calculate average processing time
+        total_processed = getattr(status, 'transcript_stream_completed', 0)
+        if total_processed > 0:
+            # This would be calculated from real metrics in production
+            avg_time = 3.2  # Placeholder
+            self.llm_avg_time_value.setText(f"{avg_time:.1f}s")
+        else:
+            self.llm_avg_time_value.setText("0.0s")
+        
+        # Final Results Updates (vereinfacht)
+        total_archived = getattr(status, 'final_archived', 0)
+        failed_stream_a = getattr(status, 'video_stream_failed', 0)
+        failed_stream_b = getattr(status, 'transcript_stream_failed', 0)
+        
+        self.total_archived_value.setText(str(total_archived))
+        self.failed_stream_a_value.setText(str(failed_stream_a))
+        self.failed_stream_b_value.setText(str(failed_stream_b))
+        
+        # Color coding für Results
+        if total_archived > 0:
+            self.total_archived_value.setStyleSheet(f"color: {OceanTheme.SEA_FOAM}; font-weight: bold;")
+        
+        if failed_stream_a > 0:
+            self.failed_stream_a_value.setStyleSheet(f"color: {OceanTheme.CORAL_ORANGE}; font-weight: bold;")
+        
+        if failed_stream_b > 0:
+            self.failed_stream_b_value.setStyleSheet(f"color: {OceanTheme.CORAL_ORANGE}; font-weight: bold;")
+        
+        # System Status Updates (unverändert)
+        self.current_label.setText(f"Status: {status.current_stage}")
+        
+        pipeline_health = getattr(status, 'pipeline_health', 'unknown')
+        health_color = {
+            "healthy": OceanTheme.SEA_FOAM,
+            "degraded": OceanTheme.YELLOW,
+            "failed": OceanTheme.CORAL_RED,
+            "unknown": OceanTheme.TEXT_MUTED
+        }.get(pipeline_health, OceanTheme.TEXT_MUTED)
+        
+        self.health_label.setText(f"Health: {pipeline_health.title()}")
+        self.health_label.setStyleSheet(f"color: {health_color}; font-weight: bold;")
+        
+        # Current Video
+        if status.current_video:
+            video_text = (f"Current: {status.current_video[:50]}..."
+                         if len(status.current_video) > 50
+                         else f"Current: {status.current_video}")
+            self.video_label.setText(video_text)
+            self.video_label.setStyleSheet(f"color: {OceanTheme.ARCTIC_BLUE};")
+        else:
+            self.video_label.setText("")
+        
+        # Active Workers
+        active_workers = getattr(status, 'active_workers', [])
+        if active_workers:
+            workers_text = f"Active: {', '.join(active_workers)}"
+            self.workers_label.setText(workers_text)
+            self.workers_label.setStyleSheet(f"color: {OceanTheme.BIOLUMINESCENT};")
+        else:
+            self.workers_label.setText("")
+        
+        # Debug Logging
+        self.logger.debug(
+            f"GUI Status Update",
+            extra={
+                'total_queued': status.total_queued,
+                'sequential_active': status.audio_download_queue + status.transcription_queue + status.analysis_queue,
+                'stream_a_active': getattr(status, 'video_download_queue', 0) + getattr(status, 'upload_queue', 0),
+                'stream_b_active': getattr(status, 'llm_processing_queue', 0) + getattr(status, 'trilium_upload_queue', 0),
+                'final_archived': total_archived,
+                'failed_a': failed_stream_a,
+                'failed_b': failed_stream_b,
+                'llm_provider': getattr(status, 'active_llm_provider', 'None'),
+                'llm_tokens': getattr(status, 'total_llm_tokens', 0),
+                'llm_cost': getattr(status, 'total_llm_cost', 0.0)
+            }
+        )
+    
+    def apply_ocean_theme(self):
+        """Wendet Ocean-Theme-Styling an"""
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {OceanTheme.DEEP_WATER};
+                border: 1px solid {OceanTheme.SURFACE};
+                border-radius: 5px;
+                margin: 2px;
+                padding: 5px;
+            }}
+            QLabel {{
+                color: {OceanTheme.TEXT_PRIMARY};
+                background-color: transparent;
+                border: none;
+            }}
+        """)
+
+# =============================================================================
+# MAIN WINDOW CLASS (unverändert bis auf PipelineStatusWidget)
+# =============================================================================
+
+class YouTubeAnalyzerMainWindow(QMainWindow):
+    """Hauptfenster der YouTube Analyzer Anwendung"""
+    
+    def __init__(self):
+        super().__init__()
+        self.logger = get_logger("YouTubeAnalyzerMainWindow")
+        self.pipeline_status = PipelineStatus()  # Mock status für Fallback
+        self.config_window = None  # Config validation window
         
         self.setup_ui()
         self.apply_ocean_theme()
         self.setup_status_timer()
     
     def setup_ui(self):
-        """Setup der Haupt-UI"""
+        """Setup der Benutzeroberfläche"""
         self.setWindowTitle("YouTube Analyzer")
         self.setMinimumSize(800, 600)
+        self.resize(1000, 700)
         
         # Central Widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        layout = QVBoxLayout(central_widget)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+        # Main Layout
+        main_layout = QHBoxLayout(central_widget)
         
-        # Header
-        header = QLabel("YouTube Video Analyzer")
-        header.setAlignment(Qt.AlignCenter)
-        header.setFont(QFont("Arial", 18, QFont.Weight.Bold))
-        layout.addWidget(header)
+        # Left Panel: Input
+        left_panel = self.create_left_panel()
+        main_layout.addWidget(left_panel, 2)
         
-        # URL Input Section
+        # Right Panel: Status
+        right_panel = self.create_right_panel()
+        main_layout.addWidget(right_panel, 1)
+    
+    def create_left_panel(self) -> QWidget:
+        """Erstellt linkes Panel mit Input-Feldern"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        
+        # Input Section
         input_section = self.create_input_section()
         layout.addWidget(input_section)
         
-        # Compatible Pipeline Status Section (ohne Metadata)
-        self.status_widget = PipelineStatusWidget()
-        layout.addWidget(self.status_widget)
-        
-        # Control Buttons
+        # Buttons
         button_layout = QHBoxLayout()
         
         self.start_button = QPushButton("Start Analysis")
@@ -598,12 +935,11 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         self.config_button.setFont(QFont("Arial", 10))
         self.config_button.clicked.connect(self.show_config_window)
         
-        # Stop Pipeline Button
         self.stop_button = QPushButton("Stop Pipeline")
         self.stop_button.setFixedHeight(50)
         self.stop_button.setFont(QFont("Arial", 10))
         self.stop_button.clicked.connect(self.stop_pipeline)
-        self.stop_button.setEnabled(False)  # Initially disabled
+        self.stop_button.setEnabled(False)
         
         button_layout.addWidget(self.start_button, 3)
         button_layout.addWidget(self.stop_button, 1)
@@ -615,6 +951,19 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
+        
+        return panel
+    
+    def create_right_panel(self) -> QWidget:
+        """Erstellt rechtes Panel mit Status-Anzeige"""
+        panel = QWidget()
+        self.right_panel_layout = QVBoxLayout(panel)
+        
+        # Corrected Pipeline Status Widget
+        self.status_widget = PipelineStatusWidget()
+        self.right_panel_layout.addWidget(self.status_widget)
+        
+        return panel
     
     def create_input_section(self) -> QFrame:
         """Erstellt URL-Input-Sektion"""
@@ -641,76 +990,37 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         """Setup Timer für Status-Updates - nur als Fallback"""
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.update_pipeline_status)
-        self.status_timer.start(1000)  # Fallback Timer für Mock-Mode
+        self.status_timer.start(1000)
     
     def update_pipeline_status(self):
         """Aktualisiert Pipeline-Status-Anzeige - nur Fallback"""
-        # Only run timer updates if no real pipeline is connected
         if not hasattr(self, 'pipeline_manager'):
-            # Fallback Mock-Update
             self.status_widget.update_status(self.pipeline_status)
         
         # Button-State Management
         if hasattr(self, 'pipeline_manager'):
-            # Real pipeline mode
-            pipeline_active = hasattr(self.pipeline_manager, 'state') and self.pipeline_manager.state.name == "RUNNING"
-        else:
-            # Fallback mode
-            pipeline_active = self.pipeline_status.is_active()
-        
-        if pipeline_active:
-            self.start_button.setText("Processing...")
-            self.start_button.setEnabled(False)
-            self.stop_button.setEnabled(True)
-            self.status_bar.showMessage(f"Processing - {self.pipeline_status.current_stage}")
-        else:
-            self.start_button.setText("Start Analysis")
-            self.start_button.setEnabled(True)
-            self.stop_button.setEnabled(False)
-            self.status_bar.showMessage("Ready")
+            is_active = self.pipeline_manager.state.value == "running"
+            self.start_button.setEnabled(not is_active)
+            self.stop_button.setEnabled(is_active)
     
     def start_analysis(self):
-        """Startet YouTube-Analyse"""
+        """Startet die Pipeline-Analyse - Fallback"""
         urls_text = self.url_input.toPlainText().strip()
         
         if not urls_text:
             self.status_bar.showMessage("Please enter YouTube URLs")
             return
         
-        urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
-        
-        if not urls:
-            self.status_bar.showMessage("No valid URLs found")
-            return
-        
-        self.logger.info(f"Starting analysis for {len(urls)} URLs")
-        
-        # Check if real pipeline is available
-        if hasattr(self, 'pipeline_manager') and PIPELINE_MANAGER_AVAILABLE:
-            # Real pipeline will be called by integrate_pipeline_with_gui
-            self.logger.info("Using real pipeline manager")
-        else:
-            # Fallback Mock-Demo
-            self.logger.info("Using fallback mock pipeline demo")
-            self.pipeline_status.audio_download_queue = len(urls)
-            self.pipeline_status.total_queued = len(urls)
-            self.pipeline_status.current_stage = "Audio Download"
-            self.pipeline_status.pipeline_health = "healthy"
-            self.pipeline_status.active_workers = ["Audio Download"]
-        
-        self.status_bar.showMessage(f"Started analysis for {len(urls)} videos")
+        self.status_bar.showMessage("Fallback mode - No pipeline manager available")
+        self.logger.warning("No pipeline manager available")
     
     def stop_pipeline(self):
-        """Stop Pipeline"""
+        """Stoppt die Pipeline - Fallback"""
         if hasattr(self, 'pipeline_manager'):
-            self.logger.info("Stopping pipeline manager")
             self.pipeline_manager.stop_pipeline()
+            self.status_bar.showMessage("Pipeline stopping...")
         else:
-            # Fallback mock stop
-            self.logger.info("Stopping mock pipeline")
-            self.pipeline_status = PipelineStatus()  # Reset to idle
-        
-        self.status_bar.showMessage("Pipeline stopped")
+            self.status_bar.showMessage("No active pipeline")
     
     def show_config_window(self):
         """Zeigt Config-Validation-Fenster"""
@@ -721,70 +1031,55 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
         self.config_window.show()
     
     def apply_ocean_theme(self):
-        """Wendet Ocean-Theme auf Hauptfenster an"""
+        """Wendet Ocean-Theme auf gesamtes Fenster an"""
         self.setStyleSheet(f"""
             QMainWindow {{
                 background-color: {OceanTheme.ABYSS};
                 color: {OceanTheme.TEXT_PRIMARY};
             }}
-            
             QWidget {{
                 background-color: {OceanTheme.ABYSS};
                 color: {OceanTheme.TEXT_PRIMARY};
             }}
-            
-            QLabel {{
-                color: {OceanTheme.TEXT_PRIMARY};
-                background: transparent;
-            }}
-            
             QFrame {{
                 background-color: {OceanTheme.DEEP_WATER};
-                border: 2px solid {OceanTheme.SURFACE};
-                border-radius: 8px;
-                padding: 15px;
+                border: 1px solid {OceanTheme.SURFACE};
+                border-radius: 5px;
+                margin: 2px;
+                padding: 10px;
             }}
-            
             QTextEdit {{
                 background-color: {OceanTheme.MIDNIGHT};
+                border: 1px solid {OceanTheme.SURFACE};
+                border-radius: 3px;
+                padding: 5px;
                 color: {OceanTheme.TEXT_PRIMARY};
-                border: 2px solid {OceanTheme.SURFACE};
-                border-radius: 5px;
-                padding: 10px;
-                font-family: 'Consolas', monospace;
             }}
-            
-            QTextEdit:focus {{
-                border-color: {OceanTheme.BIOLUMINESCENT};
-            }}
-            
             QPushButton {{
-                background-color: {OceanTheme.SEA_FOAM};
+                background-color: {OceanTheme.DEEP_TEAL};
+                border: 1px solid {OceanTheme.SEA_FOAM};
+                border-radius: 5px;
+                padding: 8px;
                 color: {OceanTheme.TEXT_PRIMARY};
-                border: 2px solid {OceanTheme.DEEP_TEAL};
-                border-radius: 8px;
-                padding: 12px;
                 font-weight: bold;
             }}
-            
             QPushButton:hover {{
-                background-color: {OceanTheme.DEEP_TEAL};
-                border-color: {OceanTheme.BIOLUMINESCENT};
+                background-color: {OceanTheme.SEA_FOAM};
             }}
-            
             QPushButton:pressed {{
                 background-color: {OceanTheme.KELP_GREEN};
             }}
-            
             QPushButton:disabled {{
-                background-color: {OceanTheme.SEAFOAM_GRAY};
+                background-color: {OceanTheme.SURFACE};
                 color: {OceanTheme.TEXT_MUTED};
-                border-color: {OceanTheme.SURFACE};
             }}
-            
+            QLabel {{
+                color: {OceanTheme.TEXT_PRIMARY};
+                background-color: transparent;
+            }}
             QStatusBar {{
-                background-color: {OceanTheme.MIDNIGHT};
-                color: {OceanTheme.TEXT_SECONDARY};
+                background-color: {OceanTheme.DEEP_WATER};
+                color: {OceanTheme.TEXT_PRIMARY};
                 border-top: 1px solid {OceanTheme.SURFACE};
             }}
         """)
@@ -795,8 +1090,6 @@ class YouTubeAnalyzerMainWindow(QMainWindow):
 
 def setup_ocean_application(app: QApplication):
     """Konfiguriert Ocean-Theme für gesamte Anwendung"""
-    
-    # Application-wide dark palette
     palette = QPalette()
     
     # Window colors

@@ -279,7 +279,6 @@ def process_with_anthropic(transcript_obj: TranskriptObject, config_dict: dict) 
     """Anthropic-spezifische LLM-Verarbeitung"""
     
     logger = get_logger("Anthropic_LLM")
-    
     if not ANTHROPIC_AVAILABLE:
         context = ErrorContext.create(
             "anthropic_processing",
@@ -338,7 +337,6 @@ def process_with_anthropic(transcript_obj: TranskriptObject, config_dict: dict) 
             
             system_prompt = unwrap_ok(system_prompt_result)
             feature.add_metric("system_prompt_length", len(system_prompt))
-            
             # Anthropic LLM initialisieren
             llm = ChatAnthropic(
                 api_key=api_key,
@@ -347,7 +345,6 @@ def process_with_anthropic(transcript_obj: TranskriptObject, config_dict: dict) 
                 max_tokens=max_tokens,
                 timeout=timeout
             )
-            
             # Messages erstellen (Full-Transcript, keine Truncation)
             messages = [
                 ("system", system_prompt),
@@ -364,7 +361,6 @@ def process_with_anthropic(transcript_obj: TranskriptObject, config_dict: dict) 
                     feature.checkpoint(f"attempt_{attempt + 1}")
                     
                     logger.debug(f"Anthropic attempt {attempt + 1}/{retry_attempts}")
-                    
                     # API-Call (Anthropic hat keinen Standard-Callback wie OpenAI)
                     # Usage info wird direkt aus response.response_metadata extrahiert
                     response = llm.invoke(messages)
@@ -372,7 +368,6 @@ def process_with_anthropic(transcript_obj: TranskriptObject, config_dict: dict) 
                     # Extract usage info from response if available
                     tokens_used = 0
                     cost_estimate = 0.0
-                    
                     if hasattr(response, 'response_metadata') and response.response_metadata:
                         usage = response.response_metadata.get('usage', {})
                         tokens_used = usage.get('input_tokens', 0) + usage.get('output_tokens', 0)

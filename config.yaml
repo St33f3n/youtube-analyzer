@@ -1,6 +1,6 @@
 llm_processing:
   max_tokens: 4000
-  model: claude-sonnet4
+  model: claude-sonnet-4-20250514
   provider: anthropic
   retry_attempts: 5
   retry_delay: 5
@@ -10,8 +10,8 @@ llm_processing:
 ollama:
   host: http://localhost:11434
   max_tokens: 4000
-  model: gemma2
-  temperature: 0.1
+  model: gemma3:4b
+  temperature: 0.2
   timeout: 300
 processing:
   audio_format: mp3
@@ -51,7 +51,7 @@ secrets:
   trilium_service: TrilliumToken
   trilium_username: token
 storage:
-  nextcloud_base_url: https://nextcloud.example.com/remote.php/dav/files/username/
+  nextcloud_base_url: https://nextcloud.organiccircuitlab.com/remote.php/dav/files/steefen
   nextcloud_path: /YouTube-Archive
   sqlite_path: data/youtube_analyzer.db
   trilium_parent_note: YouTube Knowledge Base

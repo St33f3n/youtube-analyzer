@@ -399,42 +399,57 @@ class ArchiveDatabase:
                 suggestions=["Check file permissions", "Verify SQLite installation"]
             )
             return Err(CoreError(f"Failed to initialize archive database: {e}", context))
-    
+
     def check_duplicate(self, process_obj: ProcessObject) -> Result[bool, CoreError]:
         """
-        Prüft ob Video bereits verarbeitet wurde (unchanged interface)
-        
+        Prüft ob Video bereits ERFOLGREICH verarbeitet wurde
+
         Returns:
-            Ok(True): Video existiert bereits (Duplikat)
-            Ok(False): Video ist neu
+            Ok(True): Video wurde erfolgreich verarbeitet (echtes Duplikat)
+            Ok(False): Video ist neu oder vorherige Verarbeitung fehlgeschlagen
             Err: Datenbankfehler
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute(
-                    "SELECT COUNT(*) FROM processed_videos WHERE unique_key = ?",
+                    "SELECT COUNT(*) FROM processed_videos WHERE unique_key = ? AND final_success = 1",
                     (process_obj.get_unique_key(),)
                 )
                 count = cursor.fetchone()[0]
-                
+        
                 is_duplicate = count > 0
-                
+        
+                # Zusätzliche Debug-Info für fehlgeschlagene Versuche
+                if not is_duplicate:
+                    cursor = conn.execute(
+                        "SELECT COUNT(*), processing_stage FROM processed_videos WHERE unique_key = ?",
+                        (process_obj.get_unique_key(),)
+                    )
+                    failed_attempts = cursor.fetchone()
+                    failed_count = failed_attempts[0] if failed_attempts else 0
+                    last_stage = failed_attempts[1] if failed_attempts and failed_count > 0 else None
+                else:
+                    failed_count = 0
+                    last_stage = None
+        
                 self.logger.debug(
                     f"Duplicate check completed",
                     extra={
                         'unique_key': process_obj.get_unique_key(),
                         'is_duplicate': is_duplicate,
-                        'existing_count': count
+                        'successful_count': count,
+                        'failed_attempts': failed_count,
+                        'last_processing_stage': last_stage
                     }
                 )
-                
+        
                 return Ok(is_duplicate)
-                
+        
         except Exception as e:
             context = ErrorContext.create(
                 "duplicate_check",
                 input_data={'unique_key': process_obj.get_unique_key()},
-                suggestions=["Check database connection", "Verify table exists"]
+                suggestions=["Check database connection", "Verify table exists", "Check final_success column"]
             )
             return Err(CoreError(f"Duplicate check failed: {e}", context))
     

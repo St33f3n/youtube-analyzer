@@ -271,7 +271,7 @@ class LLMProcessingConfig(BaseModel):
         """Mapping verfügbarer Models pro Provider"""
         return {
             "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"],
-            "anthropic": ["claude-3-sonnet-20240229", "claude-3-haiku-20240307", "claude-3-opus-20240229"],
+            "anthropic": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022", "claude-3-7-sonnet-latest"],
             "google": ["gemini-pro", "gemini-pro-vision"]
         }
     

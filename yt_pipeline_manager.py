@@ -24,6 +24,8 @@ from yt_url_processor import process_urls_to_objects
 from yt_transcription_worker import transcribe_process_object
 from yt_audio_downloader import download_audio_for_process_object
 from yt_rulechain import analyze_process_object
+from yt_video_downloader import download_video_for_process_object
+
 
 # CORRECTED IMPORTS: config_dict-Varianten für Secret-abhängige Worker
 from yt_nextcloud_uploader import upload_to_nextcloud_for_process_object_dict
@@ -274,7 +276,7 @@ class AnalysisWorker(BaseWorker):
         return "Fork"
 
 class VideoDownloadWorker(BaseWorker):
-    """Video Download Worker - Stream A (unchanged - kein Secret-Dependency)"""
+    """Video Download Worker - UNVERÄNDERT (keine Secrets)"""
     
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config: AppConfig):
         super().__init__("Video Download", input_queue, output_queue)
@@ -284,18 +286,10 @@ class VideoDownloadWorker(BaseWorker):
     
     def process_object(self, obj: ProcessObject) -> Result[ProcessObject, CoreError]:
         self.logger.info(f"Starting video download: {obj.titel}")
-        # TODO: Import from yt_video_downloader when available
-        # return download_video_for_process_object(obj, self.config)
-        
-        # PLACEHOLDER: Mock video download for now
-        time.sleep(1.0)
-        obj.temp_video_path = Path("/tmp/mock_video.mp4")
-        obj.update_stage("video_downloaded")
-        return Ok(obj)
+        return download_video_for_process_object(obj, self.config)
     
     def get_next_stage_name(self) -> str:
         return "Upload"
-
 # =============================================================================
 # NEW: config_dict-BASED WORKERS (Stream A & B)
 # =============================================================================
@@ -419,6 +413,8 @@ class PipelineManager(QThread):
         
         # NEW: Zentrale Secret-Resolution
         self.config_manager = SecureConfigManager()
+        self.config_manager.load_config()
+        
         self.config_dict = self._resolve_config_dict()
         
         # Pipeline State
