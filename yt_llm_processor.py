@@ -351,7 +351,7 @@ def process_with_anthropic(transcript_obj: TranskriptObject, config_dict: dict) 
             # Messages erstellen (Full-Transcript, keine Truncation)
             messages = [
                 ("system", system_prompt),
-                ("user", f"Please process the following YouTube transcript:\n\n{transcript_obj.transkript}")
+                ("user", f"Please process the following YouTube transcript:\n{transcript_obj.titel}\n{transcript_obj.transkript}")
             ]
             
             feature.add_metric("total_input_length", len(system_prompt) + len(transcript_obj.transkript))

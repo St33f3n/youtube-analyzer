@@ -1,11 +1,11 @@
 llm_processing:
   max_tokens: 4000
-  model: gpt-4
-  provider: openai
+  model: claude-sonnet4
+  provider: anthropic
   retry_attempts: 5
   retry_delay: 5
   system_prompt_file: prompts/transcript_processing.md
-  temperature: 0.1
+  temperature: 0.4
   timeout: 300
 ollama:
   host: http://localhost:11434

@@ -170,18 +170,30 @@ class WhisperTranscriptionEngine:
                     # Transcribe with faster-whisper (simplified punctuation)
                     segments, info = self.model.transcribe(
                         str(audio_path),
+    
+                        # === QUALITÄTS-PARAMETER (hoher Einfluss) ===
                         language=language,
-                        beam_size=5,
-                        best_of=5,
-                        temperature=0.0,
-                        compression_ratio_threshold=2.4,
-                        log_prob_threshold=-1.0,
-                        no_speech_threshold=0.6,
-                        condition_on_previous_text=False,
-                        initial_prompt=None,
-                        word_timestamps=False
-                    )
-                
+                        beam_size=8,                           # ↑ Erhöht von 5 → 8 (bessere Qualität)
+                        best_of=5,                             # Beibehalten (wichtig für Qualität)
+                        temperature=0.0,                       # Beibehalten (deterministische Ausgabe)
+                        compression_ratio_threshold=2.4,       # Beibehalten (Anti-Halluzination)
+                        log_prob_threshold=-1.0,               # Beibehalten (Qualitätskontrolle)
+    
+                        # === SPEED-OPTIMIERUNGEN ===
+                        no_speech_threshold=0.7,               # ↑ Erhöht von 0.6 → 0.7 (striktere Stille)
+                        condition_on_previous_text=False,      # Beibehalten (robuster + schneller)
+                        word_timestamps=False,                 # Beibehalten (Speed)
+    
+                        # === NEUE SPEED-FEATURES ===
+                        vad_filter=True,                       # ✅ NEU: Entfernt Stille vor Transkription
+                        vad_parameters={                       # ✅ NEU: Optimierte VAD-Konfiguration
+                            "threshold": 0.5,
+                            "min_speech_duration_ms": 200,
+                            "min_silence_duration_ms": 1500,
+                            "speech_pad_ms": 300
+                        },
+                        initial_prompt=None                    # Kann später optimiert werden
+                    )                
                 # Collect all segments
                 transcript_parts = []
                 total_duration = 0.0

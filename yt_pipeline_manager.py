@@ -27,8 +27,7 @@ from yt_rulechain import analyze_process_object
 
 # CORRECTED IMPORTS: config_dict-Varianten für Secret-abhängige Worker
 from yt_nextcloud_uploader import upload_to_nextcloud_for_process_object_dict
-# TODO: Zukünftige Imports für LLM und Trilium Workers:
-# from yt_llm_processor import process_transcript_with_llm_dict
+from yt_llm_processor import process_transcript_with_llm_dict
 # from yt_trilium_uploader import upload_to_trilium_dict
 
 # =============================================================================
@@ -326,39 +325,44 @@ class UploadWorker(BaseWorker):
         return "Stream A Completed"
 
 class LLMProcessingWorker(BaseWorker):
-    """LLM Processing Worker - Stream B (NEW: config_dict-basiert)"""
-    
+    """LLM Processing Worker - Stream B (UPDATED: Real LLM integration)"""
+
     def __init__(self, input_queue: ProcessingQueue, output_queue: ProcessingQueue, config_dict: dict):
         super().__init__("LLM Processing", input_queue, output_queue)
         self.config_dict = config_dict
-    
+
     def process_object(self, obj: TranskriptObject) -> Result[TranskriptObject, CoreError]:
         self.logger.info(f"Starting LLM processing: {obj.titel}")
-        
-        # PLACEHOLDER: Mock LLM processing until real implementation available
-        # result = process_transcript_with_llm_dict(obj, self.config_dict)
-        
-        time.sleep(2.0)  # Simulate LLM call
-        
-        resolved_secrets = self.config_dict.get('resolved_secrets', {})
-        llm_api_key = resolved_secrets.get('llm_api_key')
-        
-        if not llm_api_key:
+    
+        result = process_transcript_with_llm_dict(obj, self.config_dict)
+    
+        if isinstance(result, Ok):
+            processed_obj = unwrap_ok(result)
+            self.logger.info(
+                f"LLM processing completed successfully",
+                extra={
+                    'video_title': processed_obj.titel,
+                    'provider': self.config_dict['llm_processing']['provider'],
+                    'model': processed_obj.model,
+                    'tokens': processed_obj.tokens,
+                    'cost': processed_obj.cost,
+                    'processing_time': processed_obj.processing_time
+                }
+            )
+            return Ok(processed_obj)
+        else:
+            error = unwrap_err(result)
             obj.success = False
-            obj.error_message = "LLM API key not resolved"
-            return Err(CoreError("LLM API key not available"))
-        
-        obj.bearbeiteter_transkript = f"[LLM-PROCESSED] {obj.transkript[:200]}..."
-        obj.model = self.config_dict['llm_processing']['model']
-        obj.tokens = 150
-        obj.cost = 0.003
-        obj.processing_time = 2.0
-        obj.success = True
-        obj.update_stage("llm_processing_completed")
-        
-        self.logger.info(f"LLM processing completed with API key length: {len(llm_api_key)}")
-        
-        return Ok(obj)
+            obj.error_message = f"LLM processing failed: {error.message}"
+            self.logger.error(
+                f"LLM processing failed",
+                extra={
+                    'video_title': obj.titel,
+                    'error': error.message,
+                    'provider': self.config_dict['llm_processing']['provider']
+                }
+            )
+            return result
     
     def get_next_stage_name(self) -> str:
         return "Trilium Upload"
