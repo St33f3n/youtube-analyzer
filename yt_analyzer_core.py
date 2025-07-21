@@ -7,13 +7,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, time
 from pathlib import Path
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict
 import sqlite3
 from enum import Enum
 
 # Import our core libraries
 from core_types import Result, Ok, Err, CoreError, ErrorContext
-from logging_plus import get_logger, log_feature
+from logging_plus import get_logger, log_feature, log_function
 
 # =============================================================================
 # CORE DATA OBJECTS - Fork-Join Architecture
@@ -104,6 +104,10 @@ class TranskriptObject:
     Minimal und fokussiert auf Transcript-Daten
     """
     titel: str                           # Primary merge key (matches ProcessObject.titel)
+    kanal: str
+    länge: time
+    upload_date: datetime
+    original_url: str
     transkript: str                      # Original transcript from ProcessObject
     bearbeiteter_transkript: Optional[str] = None  # LLM-processed transcript
     model: Optional[str] = None          # LLM model used ("gpt-4", "claude-3-sonnet", etc.)
@@ -115,6 +119,7 @@ class TranskriptObject:
     
     # Trilium integration
     trilium_link: Optional[str] = None   # Link to created Trilium note
+    trilium_note_id: Optional[str] = None
     
     # Metadata
     date_created: datetime = field(default_factory=datetime.now)
@@ -125,6 +130,10 @@ class TranskriptObject:
         """Creates TranskriptObject from ProcessObject (data cloning for Stream B)"""
         return cls(
             titel=obj.titel,
+            kanal=obj.kanal,
+            länge=obj.länge,
+            upload_date=obj.upload_date,
+            original_url=obj.original_url,
             transkript=obj.transkript
         )
     
@@ -136,6 +145,10 @@ class TranskriptObject:
         """Converts to dictionary for logging/debugging"""
         return {
             'titel': self.titel,
+            'kanal': self.kanal,
+            'länge': self.time,
+            'upload_date': self.upload_date,
+            'original_url': self.original_url,
             'transkript_length': len(self.transkript) if self.transkript else 0,
             'bearbeiteter_transkript_length': len(self.bearbeiteter_transkript) if self.bearbeiteter_transkript else 0,
             'model': self.model,
@@ -145,6 +158,7 @@ class TranskriptObject:
             'error_message': self.error_message,
             'processing_time': self.processing_time,
             'trilium_link': self.trilium_link,
+            'tirlium_note_id': self.trilium_note_id,
             'date_created': self.date_created.isoformat(),
             'processing_stage': self.processing_stage
         }
@@ -182,6 +196,7 @@ class ArchivObject:
     llm_cost: Optional[float] = None
     llm_processing_time: Optional[float] = None
     trilium_link: Optional[str] = None
+    trilium_note_id: Optional[str] = None
     transcript_stream_success: bool = False
     
     # Final archive metadata
@@ -228,6 +243,7 @@ class ArchivObject:
             llm_cost=transcript_obj.cost,
             llm_processing_time=transcript_obj.processing_time,
             trilium_link=transcript_obj.trilium_link,
+            trilium_note_id=transcript_obj.trilium_note_id,
             transcript_stream_success=transcript_obj.success,
             
             # Final archive state
@@ -258,6 +274,7 @@ class ArchivObject:
             'llm_processing_time': self.llm_processing_time,
             'nextcloud_link': self.nextcloud_link,
             'trilium_link': self.trilium_link,
+            'trilium_note_id': self.trilium_note_id,
             'video_stream_success': self.video_stream_success,
             'transcript_stream_success': self.transcript_stream_success,
             'final_success': self.final_success,
@@ -318,87 +335,112 @@ class ProcessingStage(Enum):
 class ArchiveDatabase:
     """SQLite-Datenbank für ArchivObject storage (Fork-Join Results)"""
     
-    def __init__(self, db_path: Path = Path("youtube_archive.db")):
-        self.db_path = db_path
-        self.logger = get_logger("ArchiveDB")
-        self._init_database()
     
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self.logger = get_logger("ArchiveDatabase")
+        
+        # Ensure database directory exists
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize database
+        init_result = self._init_database()
+        if isinstance(init_result, Err):
+            self.logger.error(f"Database initialization failed: {init_result.error.message}")
+       
     def _init_database(self) -> Result[None, CoreError]:
-        """Initialisiert SQLite-Schema für ArchivObject"""
+        """Initialize database with updated schema"""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute("""
+                cursor = conn.cursor()
+                
+                # ✅ EXTENDED: Create enhanced table with trilium_note_id
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS processed_videos (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        unique_key TEXT UNIQUE NOT NULL,           -- titel::kanal combination
-                        
-                        -- Video metadata (core)
                         titel TEXT NOT NULL,
                         kanal TEXT NOT NULL,
                         länge TEXT,
-                        upload_date TEXT NOT NULL,
+                        upload_date DATETIME NOT NULL,
                         original_url TEXT,
                         
-                        -- Processing results (from analysis)
+                        -- Processing results
                         sprache TEXT,
                         transkript TEXT,
                         rule_amount INTEGER,
                         rule_accuracy REAL,
                         relevancy REAL,
-                        analysis_results TEXT,
+                        analysis_results TEXT,  -- JSON
                         passed_analysis BOOLEAN,
                         
-                        -- Stream A results (video processing)
+                        -- Stream A results  
                         nextcloud_link TEXT,
-                        video_stream_success BOOLEAN,
+                        video_stream_success BOOLEAN DEFAULT 0,
                         
-                        -- Stream B results (transcript processing)
+                        -- Stream B results
                         bearbeiteter_transkript TEXT,
                         llm_model TEXT,
                         llm_tokens INTEGER,
                         llm_cost REAL,
                         llm_processing_time REAL,
                         trilium_link TEXT,
-                        transcript_stream_success BOOLEAN,
+                        trilium_note_id TEXT, 
+                        transcript_stream_success BOOLEAN DEFAULT 0,
                         
-                        -- Final archive state
-                        final_success BOOLEAN,                     -- AND-logic result
-                        date_created TEXT NOT NULL,
-                        processing_stage TEXT NOT NULL,            -- "completed" or "failed"
-                        error_messages TEXT,
+                        -- Final metadata
+                        final_success BOOLEAN DEFAULT 0,
+                        date_created DATETIME NOT NULL,
+                        processing_stage TEXT DEFAULT 'failed',
+                        error_messages TEXT,  -- JSON
                         
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        -- Unique constraint
+                        UNIQUE(titel, kanal)
                     )
                 """)
                 
-                # Indexes for efficient operations
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_unique_key 
-                    ON processed_videos(unique_key)
+                # ✅ EXTENDED: Create index for trilium_note_id
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_trilium_note_id 
+                    ON processed_videos(trilium_note_id)
                 """)
                 
-                conn.execute("""
+                # Create other useful indexes
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_titel_kanal 
+                    ON processed_videos(titel, kanal)
+                """)
+                
+                cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_final_success 
                     ON processed_videos(final_success)
                 """)
                 
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_llm_model 
-                    ON processed_videos(llm_model)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_date_created 
+                    ON processed_videos(date_created)
                 """)
                 
                 conn.commit()
                 
-                self.logger.info("Archive database initialized for Fork-Join architecture")
+                # ✅ EXTENDED: Check if trilium_note_id column exists (migration support)
+                cursor.execute("PRAGMA table_info(processed_videos)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'trilium_note_id' not in columns:
+                    self.logger.info("Adding trilium_note_id column to existing database")
+                    cursor.execute("ALTER TABLE processed_videos ADD COLUMN trilium_note_id TEXT")
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_trilium_note_id 
+                        ON processed_videos(trilium_note_id)
+                    """)
+                    conn.commit()
+                
+                
+                self.logger.info(f"Archive database initialized: {self.db_path}")
                 return Ok(None)
                 
         except Exception as e:
-            context = ErrorContext.create(
-                "database_init",
-                input_data={'db_path': str(self.db_path)},
-                suggestions=["Check file permissions", "Verify SQLite installation"]
-            )
-            return Err(CoreError(f"Failed to initialize archive database: {e}", context))
+            return Err(CoreError(f"Database initialization failed: {e}"))
+    
 
     def check_duplicate(self, process_obj: ProcessObject) -> Result[bool, CoreError]:
         """
@@ -453,44 +495,51 @@ class ArchiveDatabase:
             )
             return Err(CoreError(f"Duplicate check failed: {e}", context))
     
+    @log_function("save_processed_video")
     def save_processed_video(self, archive_obj: ArchivObject) -> Result[None, CoreError]:
-        """Saves ArchivObject to database (new method for Fork-Join)"""
+        """Save ArchivObject to database with trilium_note_id support"""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                data = archive_obj.to_dict()
-                unique_key = archive_obj.get_unique_key()
+                cursor = conn.cursor()
                 
-                conn.execute("""
-                    INSERT OR REPLACE INTO processed_videos 
-                    (unique_key, titel, kanal, länge, upload_date, original_url, sprache, transkript,
-                     rule_amount, rule_accuracy, relevancy, analysis_results, passed_analysis,
-                     nextcloud_link, video_stream_success, bearbeiteter_transkript, llm_model,
-                     llm_tokens, llm_cost, llm_processing_time, trilium_link, transcript_stream_success,
-                     final_success, date_created, processing_stage, error_messages)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                # Convert to database format
+                data = archive_obj.to_dict()
+                
+                # Convert complex types to JSON strings
+                import json
+                data['analysis_results'] = json.dumps(data['analysis_results'])
+                data['error_messages'] = json.dumps(data['error_messages'])
+                print(data)                
+                # Insert or replace
+                cursor.execute("""
+                    INSERT OR REPLACE INTO processed_videos (
+                        titel, kanal, länge, upload_date, original_url,
+                        sprache, transkript, rule_amount, rule_accuracy, relevancy, 
+                        analysis_results, passed_analysis,
+                        nextcloud_link, video_stream_success,
+                        bearbeiteter_transkript, llm_model, llm_tokens, llm_cost, 
+                        llm_processing_time, trilium_link, trilium_note_id, transcript_stream_success,
+                        final_success, date_created, processing_stage, error_messages
+                    ) VALUES (?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    unique_key, data['titel'], data['kanal'], data['länge'],
-                    data['upload_date'], data['original_url'], data['sprache'], data['transkript'],
-                    data['rule_amount'], data['rule_accuracy'], data['relevancy'],
+                    data['titel'], data['kanal'], data['länge'], data['upload_date'], data['original_url'],
+                    data['sprache'], data['transkript'], data['rule_amount'], data['rule_accuracy'], data['relevancy'],
                     data['analysis_results'], data['passed_analysis'],
-                    data['nextcloud_link'], data['video_stream_success'], 
-                    data['bearbeiteter_transkript'], data['llm_model'], data['llm_tokens'],
-                    data['llm_cost'], data['llm_processing_time'], data['trilium_link'],
-                    data['transcript_stream_success'], data['final_success'],
-                    data['date_created'], data['processing_stage'], data['error_messages']
+                    data['nextcloud_link'], data['video_stream_success'],
+                    data['bearbeiteter_transkript'], data['llm_model'], data['llm_tokens'], data['llm_cost'],
+                    data['llm_processing_time'], data['trilium_link'], data['trilium_note_id'], data['transcript_stream_success'],
+                    data['final_success'], data['date_created'], data['processing_stage'], data['error_messages']
                 ))
                 
                 conn.commit()
                 
                 self.logger.info(
-                    f"ArchivObject saved successfully",
+                    f"Saved ArchivObject to database: {archive_obj.titel}",
                     extra={
-                        'unique_key': unique_key,
                         'final_success': archive_obj.final_success,
-                        'video_stream_success': archive_obj.video_stream_success,
-                        'transcript_stream_success': archive_obj.transcript_stream_success,
-                        'llm_model': archive_obj.llm_model,
-                        'llm_cost': archive_obj.llm_cost
+                        'trilium_note_id': archive_obj.trilium_note_id,  # ✅ EXTENDED
+                        'nextcloud_link': bool(archive_obj.nextcloud_link),
+                        'trilium_link': bool(archive_obj.trilium_link)
                     }
                 )
                 
@@ -498,12 +547,90 @@ class ArchiveDatabase:
                 
         except Exception as e:
             context = ErrorContext.create(
-                "save_archive_object",
-                input_data={'unique_key': archive_obj.get_unique_key()},
-                suggestions=["Check database permissions", "Verify disk space"]
+                "save_processed_video",
+                input_data={'titel': archive_obj.titel, 'kanal': archive_obj.kanal}
             )
-            return Err(CoreError(f"Failed to save archive object: {e}", context))
+            return Err(CoreError(f"Failed to save to database: {e}", context))
 
+    def find_by_trilium_note_id(self, note_id: str) -> Result[Optional[ArchivObject], CoreError]:
+        """✅ EXTENDED: Find ArchivObject by trilium note ID"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT * FROM processed_videos WHERE trilium_note_id = ?",
+                    (note_id,)
+                )
+                row = cursor.fetchone()
+                
+                if row:
+                    # Convert back to ArchivObject (implementation would need column mapping)
+                    self.logger.debug(f"Found archive object with trilium_note_id: {note_id}")
+                    return Ok(self._row_to_archive_object(row))
+                else:
+                    return Ok(None)
+                    
+        except Exception as e:
+            return Err(CoreError(f"Failed to find by trilium_note_id: {e}"))
+    
+    def get_statistics(self) -> Dict[str, int]:
+        """Get database statistics including trilium uploads"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Basic counts
+                cursor.execute("SELECT COUNT(*) FROM processed_videos")
+                total = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM processed_videos WHERE final_success = 1")
+                successful = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM processed_videos WHERE video_stream_success = 1")
+                video_success = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM processed_videos WHERE transcript_stream_success = 1")
+                transcript_success = cursor.fetchone()[0]
+                
+                # ✅ EXTENDED: Trilium-specific statistics
+                cursor.execute("SELECT COUNT(*) FROM processed_videos WHERE trilium_note_id IS NOT NULL")
+                trilium_uploads = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM processed_videos WHERE nextcloud_link IS NOT NULL")
+                nextcloud_uploads = cursor.fetchone()[0]
+                
+                return {
+                    'total_videos': total,
+                    'successful_videos': successful,
+                    'video_stream_success': video_success,
+                    'transcript_stream_success': transcript_success,
+                    'trilium_uploads': trilium_uploads,  # ✅ EXTENDED
+                    'nextcloud_uploads': nextcloud_uploads,
+                    'failed_videos': total - successful
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get statistics: {e}")
+            return {}
+    
+    def _row_to_archive_object(self, row) -> ArchivObject:
+        """Convert database row to ArchivObject (simplified implementation)"""
+        # This would need proper implementation with column mapping
+        # For now, return a minimal object
+        return ArchivObject(
+            titel=row[1],  # Simplified - would need proper column mapping
+            kanal=row[2],
+            länge=time.fromisoformat(row[3]) if row[3] else time(),
+            upload_date=datetime.fromisoformat(row[4]),
+            original_url=row[5] or "",
+            sprache=row[6] or "",
+            transkript=row[7] or "",
+            rule_amount=row[8] or 0,
+            rule_accuracy=row[9] or 0.0,
+            relevancy=row[10] or 0.0,
+            analysis_results={},
+            passed_analysis=bool(row[12]) if row[12] is not None else False
+        )
 # =============================================================================
 # QUEUE SYSTEM FÜR FORK-JOIN-PIPELINE
 # =============================================================================
@@ -518,158 +645,116 @@ class ProcessingQueue:
     def __init__(self, name: str, maxsize: int = 0):
         self.name = name
         self.queue: queue.Queue[Union[ProcessObject, TranskriptObject]] = queue.Queue(maxsize=maxsize)
+        self.lock = threading.lock()
         self.logger = get_logger(f"Queue-{name}")
     
-    def put(self, obj: Union[ProcessObject, TranskriptObject], timeout: Optional[float] = None) -> Result[None, CoreError]:
-        """Fügt Object zur Queue hinzu"""
-        try:
-            self.queue.put(obj, timeout=timeout)
-            
-            obj_type = "ProcessObject" if isinstance(obj, ProcessObject) else "TranskriptObject"
-            self.logger.debug(
-                f"Object added to {self.name} queue",
-                extra={
-                    'queue_name': self.name,
-                    'object_type': obj_type,
-                    'unique_key': obj.titel,  # Both objects have titel
-                    'queue_size': self.queue.qsize()
-                }
-            )
-            
-            return Ok(None)
-            
-        except queue.Full:
-            context = ErrorContext.create(
-                "queue_put",
-                input_data={'queue_name': self.name, 'queue_size': self.queue.qsize()},
-                suggestions=["Increase queue size", "Check processing bottleneck"]
-            )
-            return Err(CoreError(f"Queue {self.name} is full", context))
+    def put(self, obj: Union[ProcessObject, TranskriptObject]) -> Result[None, CoreError]:
+        """Add object to queue"""
+        with self.lock:
+            try:
+                self.queue.append(obj)
+                obj_type = "ProcessObject" if isinstance(obj, ProcessObject) else "TranskriptObject"
+                self.logger.debug(f"Added {obj_type} to queue: {obj.titel}")
+                return Ok(None)
+            except Exception as e:
+                return Err(CoreError(f"Failed to add object to queue: {e}"))
     
-    def get(self, timeout: Optional[float] = None) -> Result[Union[ProcessObject, TranskriptObject], CoreError]:
-        """Holt Object aus Queue"""
-        try:
-            obj = self.queue.get(timeout=timeout)
+    def get(self) -> Result[Union[ProcessObject, TranskriptObject], CoreError]:
+        """Get object from queue"""
+        with self.lock:
+            try:
+                if not self.queue:
+                    return Err(CoreError("Queue is empty"))
             
-            obj_type = "ProcessObject" if isinstance(obj, ProcessObject) else "TranskriptObject"
-            self.logger.debug(
-                f"Object retrieved from {self.name} queue",
-                extra={
-                    'queue_name': self.name,
-                    'object_type': obj_type,
-                    'unique_key': obj.titel,
-                    'remaining_size': self.queue.qsize()
-                }
-            )
-            
-            return Ok(obj)
-            
-        except queue.Empty:
-            context = ErrorContext.create(
-                "queue_get",
-                input_data={'queue_name': self.name},
-                suggestions=["Check if producer is running", "Verify queue input"]
-            )
-            return Err(CoreError(f"Queue {self.name} is empty", context))
-    
+                obj = self.queue.pop(0)
+                obj_type = "ProcessObject" if isinstance(obj, ProcessObject) else "TranskriptObject"
+                self.logger.debug(f"Retrieved {obj_type} from queue: {obj.titel}")
+                return Ok(obj)
+            except Exception as e:
+                return Err(CoreError(f"Failed to get object from queue: {e}"))
+      
     def task_done(self) -> None:
         """Markiert Task als abgeschlossen"""
         self.queue.task_done()
     
-    def empty(self) -> bool:
-        """Prüft ob Queue leer ist"""
-        return self.queue.empty()
-    
     def size(self) -> int:
-        """Gibt aktuelle Queue-Größe zurück"""
-        return self.queue.qsize()
-
+        """Get current queue size"""
+        with self.lock:
+            return len(self.queue)
+    
+    def is_empty(self) -> bool:
+        """Check if queue is empty"""
+        with self.lock:
+            return len(self.queue) == 0
 # =============================================================================
 # EXAMPLE USAGE & TESTING
 # =============================================================================
 
 if __name__ == "__main__":
     from logging_plus import setup_logging
+    from datetime import datetime, time as dt_time
     
-    # Logging Setup
-    setup_logging("youtube_analyzer_core", "DEBUG")
+    setup_logging("analyzer_core_test", "DEBUG")
     
-    # Test ProcessObject
+    # Test ProcessObject creation
     test_process_obj = ProcessObject(
-        titel="Test Video",
-        kanal="Test Channel",
-        länge=time(0, 5, 30),  # 5:30 Minuten
+        titel="Extended Test Video",
+        kanal="Extended Test Channel", 
+        länge=dt_time(0, 5, 30),
         upload_date=datetime.now(),
-        original_url="https://youtube.com/watch?v=test123"
+        original_url="https://www.youtube.com/watch?v=extended123"
     )
     
-    # Mock some processing results
-    test_process_obj.sprache = "deutsch"
-    test_process_obj.transkript = "Dies ist ein Test-Transkript für das Video."
+    # Mock processing results
+    test_process_obj.sprache = "de"
+    test_process_obj.transkript = "This is an extended test transcript"
     test_process_obj.rule_amount = 3
     test_process_obj.rule_accuracy = 0.85
-    test_process_obj.relevancy = 0.9
+    test_process_obj.relevancy = 0.92
     test_process_obj.passed_analysis = True
+    test_process_obj.nextcloud_link = "https://nextcloud.example.com/share/abc123"
     test_process_obj.video_stream_success = True
-    test_process_obj.nextcloud_link = "https://nextcloud.example.com/file123"
     
-    print(f"ProcessObject Unique Key: {test_process_obj.get_unique_key()}")
-    print(f"ProcessObject Dict: {test_process_obj.to_dict()}")
+    print(f"Extended ProcessObject Dict: {test_process_obj.to_dict()}")
     
     # Test TranskriptObject creation
     test_transcript_obj = TranskriptObject.from_process_object(test_process_obj)
-    
-    # Mock LLM processing results
-    test_transcript_obj.bearbeiteter_transkript = "Bearbeitetes Transkript mit LLM-Verbesserungen."
-    test_transcript_obj.model = "gpt-4"
-    test_transcript_obj.tokens = 150
-    test_transcript_obj.cost = 0.003
-    test_transcript_obj.processing_time = 2.5
+    test_transcript_obj.bearbeiteter_transkript = "Test_transkrikpt"
+    test_transcript_obj.model = "claude-sonnet-4-20250514"
+    test_transcript_obj.tokens = 250
+    test_transcript_obj.cost = 0.0045
+    test_transcript_obj.processing_time = 3.8
     test_transcript_obj.success = True
-    test_transcript_obj.trilium_link = "https://trilium.example.com/note/abc123"
+    test_transcript_obj.trilium_link = "https://trilium.example.com/#note/sK5fn4T6yZRI"
+    test_transcript_obj.trilium_note_id = "sK5fn4T6yZRI"  # ✅ EXTENDED
     
-    print(f"TranskriptObject Dict: {test_transcript_obj.to_dict()}")
+    print(f"Extended TranskriptObject Dict: {test_transcript_obj.to_dict()}")
     
     # Test ArchivObject creation
     test_archive_obj = ArchivObject.from_process_and_transcript(test_process_obj, test_transcript_obj)
     
-    print(f"ArchivObject Final Success: {test_archive_obj.final_success}")
-    print(f"ArchivObject Unique Key: {test_archive_obj.get_unique_key()}")
-    print(f"ArchivObject Dict: {test_archive_obj.to_dict()}")
+    print(f"Extended ArchivObject Final Success: {test_archive_obj.final_success}")
+    print(f"Extended ArchivObject Trilium Note ID: {test_archive_obj.trilium_note_id}")  # ✅ EXTENDED
+    print(f"Extended ArchivObject Dict Keys: {list(test_archive_obj.to_dict().keys())}")
     
-    # Test Archive Database
-    with log_feature("database_test"):
-        archive = ArchiveDatabase(Path("test_fork_join_archive.db"))
-        
-        # Save ArchivObject
+    # Test Extended Archive Database
+    with log_feature("extended_database_test"):
+        archive = ArchiveDatabase(Path("test_extended_archive.db"))
+        print(f"ArchivObject: {test_archive_obj}")
+        # Save ArchivObject with trilium_note_id
         save_result = archive.save_processed_video(test_archive_obj)
         if isinstance(save_result, Ok):
-            print("✅ ArchivObject saved successfully")
+            print("✅ Extended ArchivObject saved successfully")
+            
+            # Test trilium_note_id lookup
+            lookup_result = archive.find_by_trilium_note_id("sK5fn4T6yZRI")
+            if isinstance(lookup_result, Ok) and lookup_result.value:
+                print("✅ Found ArchivObject by trilium_note_id")
+            else:
+                print("❌ Trilium note ID lookup failed")
         else:
-            print(f"❌ Archive save failed: {save_result.error.message}")
-    
-    # Test Queue with both object types
-    test_queue = ProcessingQueue("test_fork_join_queue")
-    
-    # Test ProcessObject in queue
-    put_result1 = test_queue.put(test_process_obj)
-    if isinstance(put_result1, Ok):
-        print("✅ ProcessObject added to queue")
-    
-    # Test TranskriptObject in queue
-    put_result2 = test_queue.put(test_transcript_obj)
-    if isinstance(put_result2, Ok):
-        print("✅ TranskriptObject added to queue")
-    
-    # Retrieve objects
-    get_result1 = test_queue.get()
-    if isinstance(get_result1, Ok):
-        retrieved_obj = get_result1.value
-        obj_type = "ProcessObject" if isinstance(retrieved_obj, ProcessObject) else "TranskriptObject"
-        print(f"✅ Retrieved {obj_type}: {retrieved_obj.titel}")
-    
-    get_result2 = test_queue.get()
-    if isinstance(get_result2, Ok):
-        retrieved_obj = get_result2.value
-        obj_type = "ProcessObject" if isinstance(retrieved_obj, ProcessObject) else "TranskriptObject"
-        print(f"✅ Retrieved {obj_type}: {retrieved_obj.titel}")
+            print(f"❌ Extended archive save failed: {save_result.error.message}")
+        
+        # Test extended statistics
+        stats = archive.get_statistics()
+        print(f"Extended Database Statistics: {stats}")
