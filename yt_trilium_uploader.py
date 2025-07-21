@@ -185,7 +185,6 @@ class TriliumUploader:
                 content=content,
                 type="text"
             )
-            print(note_result)      
             if not note_result or not note_result.get('note'):
                 error = CoreError("Failed to create Trilium note: Invalid response")
                 self.upload_stats['failed_uploads'] += 1
@@ -300,7 +299,7 @@ class TriliumUploader:
         # Original transcript (reference)
         if transcript_obj.transkript:
             content_parts.append("## Original Transcript")
-            content_parts.append(transcript_obj.transkript.strip())
+            content_parts.append(transcript_obj.transkript)
     
         # Convert markdown to HTML
         markdown_content = "\n".join(content_parts)
@@ -486,7 +485,6 @@ if __name__ == "__main__":
     # Test configuration mit Secret-Resolution
     config_manager = SecureConfigManager()
     config_result = config_manager.load_config()
-    print(config_result)
     if isinstance(config_result, Ok):
         config = unwrap_ok(config_result)
         

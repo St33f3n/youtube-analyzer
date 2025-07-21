@@ -1,6 +1,6 @@
 """
 YouTube Analyzer - Enhanced Fork-Join Pipeline Manager
-Vollständige Fork-Join-Architektur mit zentraler Secret-Resolution und config_dict-Distribution
+EXTENDED: Complete Trilium Integration mit TrilliumUploadWorker und trilium_note_id handling
 """
 
 from __future__ import annotations
@@ -26,19 +26,18 @@ from yt_audio_downloader import download_audio_for_process_object
 from yt_rulechain import analyze_process_object
 from yt_video_downloader import download_video_for_process_object
 
-
 # CORRECTED IMPORTS: config_dict-Varianten für Secret-abhängige Worker
 from yt_nextcloud_uploader import upload_to_nextcloud_for_process_object_dict
 from yt_llm_processor import process_transcript_with_llm_dict
-# from yt_trilium_uploader import upload_to_trilium_dict
+from yt_trilium_uploader import upload_to_trilium_dict  # ✅ ACTIVATED: Real Trilium integration
 
 # =============================================================================
-# ENHANCED PIPELINE STATUS (Simple GUI-Compatible)
+# ENHANCED PIPELINE STATUS (Complete LLM + Trilium Metrics)
 # =============================================================================
 
 @dataclass
 class PipelineStatus:
-    """Enhanced Pipeline Status mit vollständigen LLM-Metriken"""
+    """Enhanced Pipeline Status mit vollständigen LLM + Trilium-Metriken"""
     # Existing queue counters (unchanged)
     audio_download_queue: int = 0
     transcription_queue: int = 0
@@ -65,16 +64,20 @@ class PipelineStatus:
     pipeline_health: str = "healthy"
     estimated_completion: Optional[datetime] = None
     
-    # ✅ HINZUGEFÜGT: LLM-Metriken (fehlten vorher!)
+    # LLM-Metriken (existing)
     total_llm_tokens: int = 0
     total_llm_cost: float = 0.0
     active_llm_provider: Optional[str] = None
-    
-    # ✅ HINZUGEFÜGT: Erweiterte LLM-Metriken
     llm_videos_processed: int = 0
     average_llm_processing_time: float = 0.0
     
-    # ✅ HINZUGEFÜGT: Fork-Join spezifische Metriken
+    # ✅ EXTENDED: Trilium-specific metrics
+    trilium_notes_created: int = 0
+    trilium_upload_success_rate: float = 0.0
+    average_trilium_upload_time: float = 0.0
+    trilium_server_status: str = "unknown"  # "connected", "disconnected", "error"
+    
+    # Fork-Join specific tracking
     pending_merges: int = 0
     video_stream_completed: int = 0
     transcript_stream_completed: int = 0
@@ -104,13 +107,12 @@ class PipelineState(Enum):
     STOPPING = "stopping"
     FINISHED = "finished"
 
-
 # =============================================================================
-# LLM METRICS COLLECTOR (NEUE KLASSE)
+# ENHANCED LLM METRICS COLLECTOR (Extended for Trilium)
 # =============================================================================
 
 class LLMMetricsCollector:
-    """Sammelt und verwaltet LLM-Metriken aus TranskriptObjects"""
+    """Enhanced LLM + Trilium Metrics Collector"""
     
     def __init__(self):
         self.logger = get_logger("LLMMetricsCollector")
@@ -118,6 +120,7 @@ class LLMMetricsCollector:
     
     def reset_metrics(self):
         """Reset alle Metriken für neue Pipeline"""
+        # LLM Metrics (existing)
         self.total_tokens = 0
         self.total_cost = 0.0
         self.videos_processed = 0
@@ -125,6 +128,14 @@ class LLMMetricsCollector:
         self.current_provider = None
         self.cost_breakdown = {}  # {"openai": 0.15, "anthropic": 0.05}
         self.token_breakdown = {}  # {"openai": 1500, "anthropic": 800}
+        
+        # ✅ EXTENDED: Trilium Metrics
+        self.trilium_notes_created = 0
+        self.trilium_upload_times = []
+        self.trilium_upload_successes = 0
+        self.trilium_upload_failures = 0
+        self.trilium_server_status = "unknown"
+        self.trilium_note_ids_created = []  # Track note IDs for reference
     
     def add_transcript_metrics(self, transcript_obj: TranskriptObject):
         """Fügt Metriken von erfolgreich verarbeitetem TranskriptObject hinzu"""
@@ -169,6 +180,48 @@ class LLMMetricsCollector:
             }
         )
     
+    def add_trilium_metrics(self, transcript_obj: TranskriptObject, upload_time: float, success: bool) -> None:
+        """✅ NEW: Sammelt Trilium-Upload-Metriken"""
+        self.trilium_upload_times.append(upload_time)
+        
+        if success:
+            self.trilium_upload_successes += 1
+            self.trilium_notes_created += 1
+            
+            # Track note ID if available
+            if transcript_obj.trilium_note_id:
+                self.trilium_note_ids_created.append(transcript_obj.trilium_note_id)
+                
+            self.trilium_server_status = "connected"
+        else:
+            self.trilium_upload_failures += 1
+            if self.trilium_server_status != "connected":
+                self.trilium_server_status = "error"
+        
+        self.logger.debug(
+            f"Added Trilium metrics from {transcript_obj.titel}",
+            extra={
+                'upload_time': upload_time,
+                'success': success,
+                'note_id': transcript_obj.trilium_note_id,
+                'total_notes_created': self.trilium_notes_created,
+                'success_rate': self.get_trilium_success_rate()
+            }
+        )
+    
+    def get_trilium_success_rate(self) -> float:
+        """✅ NEW: Berechnet Trilium-Upload-Erfolgsrate"""
+        total_attempts = self.trilium_upload_successes + self.trilium_upload_failures
+        if total_attempts == 0:
+            return 0.0
+        return (self.trilium_upload_successes / total_attempts) * 100.0
+    
+    def get_average_trilium_upload_time(self) -> float:
+        """✅ NEW: Berechnet durchschnittliche Trilium-Upload-Zeit"""
+        if not self.trilium_upload_times:
+            return 0.0
+        return sum(self.trilium_upload_times) / len(self.trilium_upload_times)
+    
     def _extract_provider_from_model(self, model: str) -> str:
         """Extrahiert Provider-Namen aus Model-String"""
         model_lower = model.lower()
@@ -188,8 +241,9 @@ class LLMMetricsCollector:
         return sum(self.processing_times) / len(self.processing_times)
     
     def get_metrics_summary(self) -> Dict[str, Any]:
-        """Gibt vollständige Metriken-Zusammenfassung zurück"""
+        """Gibt vollständige Metriken-Zusammenfassung zurück (extended)"""
         return {
+            # LLM Metrics (existing)
             'total_tokens': self.total_tokens,
             'total_cost': self.total_cost,
             'videos_processed': self.videos_processed,
@@ -198,9 +252,16 @@ class LLMMetricsCollector:
             'cost_breakdown': self.cost_breakdown.copy(),
             'token_breakdown': self.token_breakdown.copy(),
             'cost_per_video': self.total_cost / self.videos_processed if self.videos_processed > 0 else 0.0,
-            'tokens_per_video': self.total_tokens / self.videos_processed if self.videos_processed > 0 else 0.0
+            'tokens_per_video': self.total_tokens / self.videos_processed if self.videos_processed > 0 else 0.0,
+            
+            # ✅ EXTENDED: Trilium Metrics
+            'trilium_notes_created': self.trilium_notes_created,
+            'trilium_success_rate': self.get_trilium_success_rate(),
+            'average_trilium_upload_time': self.get_average_trilium_upload_time(),
+            'trilium_server_status': self.trilium_server_status,
+            'trilium_upload_attempts': self.trilium_upload_successes + self.trilium_upload_failures,
+            'trilium_note_ids': self.trilium_note_ids_created.copy()
         }
-
 
 # =============================================================================
 # ENHANCED BASE WORKER CLASS für Fork-Join
@@ -231,14 +292,15 @@ class BaseWorker(QThread):
         while not self.should_stop.is_set():
             try:
                 # Get Object from queue (ProcessObject oder TranskriptObject)
-                obj_result = self.input_queue.get(timeout=1.0)
+                obj_result = self.input_queue.get()
                 
                 if isinstance(obj_result, Err):
-                    continue  # Queue empty, try again
+                    self.msleep(100)  # Queue empty, wait and continue
+                    continue
                 
                 obj = unwrap_ok(obj_result)
-                self.is_processing = True
                 self.current_object = obj
+                self.is_processing = True
                 
                 # Update status
                 self.stage_status_changed.emit(self.stage_name, self.input_queue.size())
@@ -273,7 +335,6 @@ class BaseWorker(QThread):
                         obj.error_message = f"{self.stage_name}: {error.message}"
                     self.processing_error.emit(obj, error.message)
                 
-                self.input_queue.task_done()
                 self.current_object = None
                 self.is_processing = False
                 
@@ -403,6 +464,7 @@ class VideoDownloadWorker(BaseWorker):
     
     def get_next_stage_name(self) -> str:
         return "Upload"
+
 # =============================================================================
 # NEW: config_dict-BASED WORKERS (Stream A & B)
 # =============================================================================
@@ -475,34 +537,59 @@ class LLMProcessingWorker(BaseWorker):
         return "Trilium Upload"
 
 class TrilliumUploadWorker(BaseWorker):
-    """Trilium Upload Worker - Stream B Final (NEW: config_dict-basiert)"""
+    """✅ EXTENDED: Trilium Upload Worker - Stream B Final (Real Implementation)"""
     
-    def __init__(self, input_queue: ProcessingQueue, config_dict: dict):
+    def __init__(self, input_queue: ProcessingQueue, config_dict: dict, metrics_collector: LLMMetricsCollector):
         super().__init__("Trilium Upload", input_queue, None)  # No output queue - end of Stream B
         self.config_dict = config_dict
+        self.metrics_collector = metrics_collector
     
     def process_object(self, obj: TranskriptObject) -> Result[TranskriptObject, CoreError]:
         self.logger.info(f"Starting Trilium upload: {obj.titel}")
         
-        # PLACEHOLDER: Mock Trilium upload until real implementation available
-        # result = upload_to_trilium_dict(obj, self.config_dict)
+        upload_start_time = time.time()
         
-        time.sleep(1.0)  # Simulate upload
+        # ✅ EXTENDED: Real Trilium upload with metrics collection
+        result = upload_to_trilium_dict(obj, self.config_dict)
         
-        resolved_secrets = self.config_dict.get('resolved_secrets', {})
-        trilium_token = resolved_secrets.get('trilium_token')
+        upload_time = time.time() - upload_start_time
         
-        if not trilium_token:
+        if isinstance(result, Ok):
+            processed_obj = unwrap_ok(result)
+            
+            # ✅ EXTENDED: Collect Trilium metrics
+            self.metrics_collector.add_trilium_metrics(processed_obj, upload_time, True)
+            
+            self.logger.info(
+                f"Trilium upload completed successfully",
+                extra={
+                    'video_title': processed_obj.titel,
+                    'trilium_note_id': processed_obj.trilium_note_id,
+                    'trilium_link': processed_obj.trilium_link,
+                    'upload_time': upload_time
+                }
+            )
+            
+            return Ok(processed_obj)
+        else:
+            error = unwrap_err(result)
+            
+            # ✅ EXTENDED: Collect failure metrics
+            self.metrics_collector.add_trilium_metrics(obj, upload_time, False)
+            
             obj.success = False
-            obj.error_message = "Trilium token not resolved"
-            return Err(CoreError("Trilium token not available"))
-        
-        obj.trilium_link = f"https://trilium.example.com/note/{obj.titel.replace(' ', '_')}"
-        obj.update_stage("trilium_upload_completed")
-        
-        self.logger.info(f"Trilium upload completed with token length: {len(trilium_token)}")
-        
-        return Ok(obj)
+            obj.error_message = f"Trilium upload failed: {error.message}"
+            
+            self.logger.error(
+                f"Trilium upload failed",
+                extra={
+                    'video_title': obj.titel,
+                    'error': error.message,
+                    'upload_time': upload_time
+                }
+            )
+            
+            return result
     
     def get_next_stage_name(self) -> str:
         return "Stream B Completed"
@@ -512,11 +599,12 @@ class TrilliumUploadWorker(BaseWorker):
 # =============================================================================
 
 class PipelineManager(QThread):
-    """Enhanced Pipeline Manager with Zentrale Secret-Resolution und config_dict-Distribution"""
+    """Enhanced Pipeline Manager with complete Trilium integration"""
     
     # Signals für GUI
     status_updated = Signal(PipelineStatus)
     video_completed = Signal(str, bool)  # title, success
+    transcript_completed = Signal(str, bool)  # ✅ NEW: Trilium completion signal
     pipeline_finished = Signal(int, int, list)  # total, success, errors
     
     def __init__(self, config: AppConfig):
@@ -533,6 +621,7 @@ class PipelineManager(QThread):
         self.stream_completion_stats = {
             'video_completed': 0,
             'transcript_completed': 0,
+            'trilium_uploads': 0,  # ✅ NEW
             'final_archived': 0,
             'video_failed': 0,
             'transcript_failed': 0
@@ -568,7 +657,7 @@ class PipelineManager(QThread):
         self.transcript_failure_list: List[TranskriptObject] = []
         
         # Archive management
-        self.archive_database = ArchiveDatabase()
+        self.archive_database = ArchiveDatabase(Path(self.config.storage.sqlite_path))
         
         # Thread safety
         self.state_lock = threading.Lock()
@@ -582,7 +671,7 @@ class PipelineManager(QThread):
         self.status_timer.start(2000)  # 2 seconds
     
     def _resolve_config_dict(self) -> dict:
-        """NEW: Zentrale Secret-Resolution für alle Worker"""
+        """✅ EXTENDED: Zentrale Secret-Resolution für alle Worker inkl. Trilium"""
         config_dict = self.config.dict()
         resolved_secrets = {}
         
@@ -596,7 +685,7 @@ class PipelineManager(QThread):
         else:
             self.logger.warning(f"⚠️ Nextcloud password resolution failed: {unwrap_err(nextcloud_result).message}")
         
-        # Trilium Secret Resolution
+        # ✅ EXTENDED: Trilium Secret Resolution
         trilium_result = self.config_manager.get_trilium_token()
         if isinstance(trilium_result, Ok):
             resolved_secrets['trilium_token'] = unwrap_ok(trilium_result)
@@ -622,7 +711,7 @@ class PipelineManager(QThread):
                 'resolved_secrets_count': len(resolved_secrets),
                 'resolved_secrets_keys': list(resolved_secrets.keys()),
                 'nextcloud_ready': 'nextcloud_password' in resolved_secrets,
-                'trilium_ready': 'trilium_token' in resolved_secrets,
+                'trilium_ready': 'trilium_token' in resolved_secrets,  # ✅ EXTENDED
                 'llm_ready': 'llm_api_key' in resolved_secrets
             }
         )
@@ -638,11 +727,11 @@ class PipelineManager(QThread):
         self.processing_errors.clear()
         self.completed_videos.clear()
 
-
         self.llm_metrics.reset_metrics()
         self.stream_completion_stats = {
             'video_completed': 0,
             'transcript_completed': 0,
+            'trilium_uploads': 0,  # ✅ EXTENDED
             'final_archived': 0,
             'video_failed': 0,
             'transcript_failed': 0
@@ -692,7 +781,7 @@ class PipelineManager(QThread):
         return Ok(None)
     
     def setup_workers(self) -> Result[None, CoreError]:
-        """Enhanced worker setup mit config_dict-Distribution"""
+        """✅ EXTENDED: Enhanced worker setup mit Trilium integration"""
         try:
             self.cleanup_workers()
             
@@ -707,9 +796,9 @@ class PipelineManager(QThread):
                 VideoDownloadWorker(self.queues["video_download"], self.queues["upload"], self.config),  # kein Secret
                 UploadWorker(self.queues["upload"], self.config_dict),  # NEW: config_dict mit Secret
                 
-                # Stream B: Transcript Processing (NEW: config_dict mit Secrets)
+                # ✅ EXTENDED: Stream B: Transcript Processing (config_dict mit Trilium)
                 LLMProcessingWorker(self.queues["llm_processing"], self.queues["trilium_upload"], self.config_dict),
-                TrilliumUploadWorker(self.queues["trilium_upload"], self.config_dict)
+                TrilliumUploadWorker(self.queues["trilium_upload"], self.config_dict, self.llm_metrics)  # ✅ NEW
             ]
             
             # Connect signals für Fork-Join-Orchestration
@@ -722,20 +811,23 @@ class PipelineManager(QThread):
                 worker.start()
             
             self.logger.info(
-                f"Started {len(self.workers)} workers for Fork-Join pipeline",
+                f"Enhanced workers started successfully",
                 extra={
-                    'appconfig_workers': 4,  # Audio, Transcription, Analysis, VideoDownload  
+                    'total_workers': len(self.workers),
+                    'config_workers': 4,  # Audio, Transcription, Analysis, VideoDownload
                     'config_dict_workers': 3,  # Upload, LLM, Trilium
+                    'trilium_integration': True,  # ✅ EXTENDED
                     'resolved_secrets': list(self.config_dict.get('resolved_secrets', {}).keys())
                 }
             )
+            
             return Ok(None)
             
         except Exception as e:
-            return Err(CoreError(f"Fork-Join worker setup failed: {e}"))
+            return Err(CoreError(f"Enhanced worker setup failed: {e}"))
     
     def handle_worker_completion(self, obj: Union[ProcessObject, TranskriptObject], next_stage: str):
-            """Enhanced completion handler mit LLM-Metriken-Sammlung"""
+            """✅ EXTENDED: Enhanced completion handler mit Trilium support"""
             with self.state_lock:
                 if isinstance(obj, ProcessObject):
                     # Stream A completion
@@ -745,19 +837,25 @@ class PipelineManager(QThread):
                         self.process_video_completion(obj)
                     
                 elif isinstance(obj, TranskriptObject):
-                    # Stream B completion
+                    # ✅ EXTENDED: Stream B completion with Trilium handling
                     if next_stage == "stream_completed" or next_stage == "Stream B Completed":
                         obj.success = True
                         self.stream_completion_stats['transcript_completed'] += 1
                     
-                        # ✅ HINZUGEFÜGT: LLM-Metriken sammeln
+                        # ✅ EXTENDED: LLM-Metriken sammeln
                         self.llm_metrics.add_transcript_metrics(obj)
+                        
+                        # ✅ EXTENDED: Track Trilium uploads
+                        if obj.trilium_note_id:
+                            self.stream_completion_stats['trilium_uploads'] += 1
                     
                         self.process_transcript_completion(obj)
+                        
+                        # ✅ NEW: Emit Trilium completion signal
+                        self.transcript_completed.emit(obj.titel, obj.success)
                             
-
     def handle_worker_error(self, obj: Union[ProcessObject, TranskriptObject], error_message: str):
-            """Enhanced error handler mit Stream-Statistiken"""
+            """✅ EXTENDED: Enhanced error handler mit Trilium error tracking"""
             with self.state_lock:
                 if isinstance(obj, ProcessObject):
                     # Stream A failure
@@ -766,14 +864,38 @@ class PipelineManager(QThread):
                     if hasattr(obj, 'add_error'):
                         obj.add_error(f"Video stream failed: {error_message}")
                     self.process_video_completion(obj)
-                
+            
                 elif isinstance(obj, TranskriptObject):
                     # Stream B failure
                     obj.success = False
                     obj.error_message = error_message
                     self.stream_completion_stats['transcript_failed'] += 1
+                
+                    # ✅ EXTENDED: Track Trilium upload failures
+                    if "trilium" in error_message.lower():
+                        self.logger.error(
+                            f"Trilium upload error detected",
+                            extra={
+                                'video_title': obj.titel,
+                                'error_message': error_message,
+                                'trilium_note_id': getattr(obj, 'trilium_note_id', None)
+                            }
+                        )
+                
                     self.process_transcript_completion(obj)
-    
+            
+                # Add to processing errors for summary
+                error_obj = ProcessingError(
+                    video_title=getattr(obj, 'titel', 'unknown'),
+                    video_url=getattr(obj, 'original_url', 'unknown'),
+                    stage=error_message.split(':')[0] if ':' in error_message else 'unknown',
+                    error_message=error_message,
+                    timestamp=datetime.now(),
+                    object_type="ProcessObject" if isinstance(obj, ProcessObject) else "TranskriptObject"
+                )
+                self.processing_errors.append(error_obj)
+                            
+
     def process_video_completion(self, video_obj: ProcessObject):
         """Processes Stream A completion and attempts merging"""
         titel = video_obj.titel
@@ -784,8 +906,7 @@ class PipelineManager(QThread):
         if transcript_match:
             # Both streams completed - merge and archive
             archive_obj = self.merge_objects(video_obj, transcript_match)
-            self.completed_videos.append(archive_obj)
-            self.video_completed.emit(archive_obj.titel, archive_obj.final_success)
+            self.archive_final_object(archive_obj)
         else:
             # Store in appropriate list for later merging
             if video_obj.video_stream_success:
@@ -794,7 +915,7 @@ class PipelineManager(QThread):
                 self.video_failure_list.append(video_obj)
     
     def process_transcript_completion(self, transcript_obj: TranskriptObject):
-        """Processes Stream B completion and attempts merging"""
+        """✅ EXTENDED: Process Stream B completion with Trilium note tracking"""
         titel = transcript_obj.titel
         
         # Check if corresponding video is already completed
@@ -802,13 +923,19 @@ class PipelineManager(QThread):
         
         if video_match:
             # Both streams completed - merge and archive
-            archive_obj = self.merge_objects(video_match, transcript_obj)
-            self.completed_videos.append(archive_obj)
-            self.video_completed.emit(archive_obj.titel, archive_obj.final_success)
+            merged_obj = self.merge_objects(video_match, transcript_obj)
+            self.archive_final_object(merged_obj)
         else:
             # Store in appropriate list for later merging
             if transcript_obj.success:
                 self.transcript_success_list.append(transcript_obj)
+                self.logger.debug(
+                    f"Transcript success stored for merging: {transcript_obj.titel}",
+                    extra={
+                        'trilium_note_id': transcript_obj.trilium_note_id,  # ✅ EXTENDED
+                        'trilium_link': bool(transcript_obj.trilium_link)
+                    }
+                )
             else:
                 self.transcript_failure_list.append(transcript_obj)
     
@@ -841,48 +968,49 @@ class PipelineManager(QThread):
         return None
     
     def merge_objects(self, video_obj: ProcessObject, transcript_obj: TranskriptObject) -> ArchivObject:
-        """Creates ArchivObject and archives directly (Pipeline Manager handles archive)"""
-        # Create archive object with clean separation
+        """✅ EXTENDED: Merge objects with Trilium note ID preservation"""
         archive_obj = ArchivObject.from_process_and_transcript(video_obj, transcript_obj)
         
-        if archive_obj.final_success:
-            self.stream_completion_stats['final_archived'] += 1
+        self.logger.info(
+            f"Merged fork-join objects: {archive_obj.titel}",
+            extra={
+                'final_success': archive_obj.final_success,
+                'video_stream_success': archive_obj.video_stream_success,
+                'transcript_stream_success': archive_obj.transcript_stream_success,
+                'trilium_note_id': archive_obj.trilium_note_id,  # ✅ EXTENDED
+                'nextcloud_link': bool(archive_obj.nextcloud_link),
+                'trilium_link': bool(archive_obj.trilium_link)
+            }
+        )
         
-        # Direct archive insertion by Pipeline Manager
-        archive_result = self.archive_database.save_processed_video(archive_obj)
-        
-        if isinstance(archive_result, Ok):
-                    self.logger.info(
-                        f"Video archived successfully: {archive_obj.titel}",
-                        extra={
-                            'final_success': archive_obj.final_success,
-                            'video_stream_success': archive_obj.video_stream_success,
-                            'transcript_stream_success': archive_obj.transcript_stream_success,
-                            'llm_model': archive_obj.llm_model,
-                            'llm_cost': archive_obj.llm_cost,
-                            'llm_tokens': archive_obj.llm_tokens,
-                            'has_nextcloud_link': bool(archive_obj.nextcloud_link),
-                            'has_trilium_link': bool(archive_obj.trilium_link)
-                        }
-                    )
-        else:
-            self.logger.error(f"Archive failed for {archive_obj.titel}: {unwrap_err(archive_result).message}")
-                
         return archive_obj
     
     def archive_final_object(self, archive_obj: ArchivObject):
-        """Direct archiving method called by AnalysisWorker for failed analysis"""
+        """✅ EXTENDED: Archive with Trilium note ID persistence"""
         archive_result = self.archive_database.save_processed_video(archive_obj)
         
         if isinstance(archive_result, Ok):
-            self.logger.info(f"Failed analysis object archived: {archive_obj.titel}")
+            self.stream_completion_stats['final_archived'] += 1
             self.completed_videos.append(archive_obj)
-            self.video_completed.emit(archive_obj.titel, False)
+            
+            self.logger.info(
+                f"Final object archived successfully: {archive_obj.titel}",
+                extra={
+                    'final_success': archive_obj.final_success,
+                    'trilium_note_id': archive_obj.trilium_note_id,  # ✅ EXTENDED
+                    'archive_id': len(self.completed_videos)
+                }
+            )
+            
+            self.video_completed.emit(archive_obj.titel, archive_obj.final_success)
+            
         else:
-            self.logger.error(f"Archive failed for failed analysis: {archive_obj.titel}")
+            error = unwrap_err(archive_result)
+            self.logger.error(f"Archive failed: {error.message}")
+            self.processing_errors.append(f"Archive failed for {archive_obj.titel}: {error.message}")
 
     def emit_status_update(self):
-            """✅ KORRIGIERTE Status-Update mit vollständigen LLM-Metriken"""
+            """✅ EXTENDED: Enhanced status update with complete Trilium metrics"""
             if self.state == PipelineState.IDLE:
                 return
         
@@ -894,7 +1022,7 @@ class PipelineManager(QThread):
                 if worker.is_processing:
                     active_workers_list.append(worker.stage_name)
                     if worker.current_object and not current_video_title:
-                        current_video_title = worker.current_object.titel
+                        current_video_title = getattr(worker.current_object, 'titel', None)
         
             # Calculate pipeline health
             total_errors = len(self.processing_errors)
@@ -909,10 +1037,10 @@ class PipelineManager(QThread):
             else:
                 health = "healthy"
         
-            # ✅ HINZUGEFÜGT: LLM-Metriken aus Collector holen
+            # ✅ EXTENDED: Get enhanced metrics including Trilium
             llm_summary = self.llm_metrics.get_metrics_summary()
         
-            # ✅ KORRIGIERT: Status-Berechnung mit allen LLM-Metriken
+            # ✅ EXTENDED: Status-Berechnung mit allen LLM + Trilium-Metriken
             status = PipelineStatus(
                 # Queue sizes + active worker tracking
                 audio_download_queue=self.queues["audio_download"].size() + (1 if any(w.stage_name == "Audio Download" and w.is_processing for w in self.workers) else 0),
@@ -922,7 +1050,7 @@ class PipelineManager(QThread):
                 upload_queue=self.queues["upload"].size() + (1 if any(w.stage_name == "Upload" and w.is_processing for w in self.workers) else 0),
                 processing_queue=0,  # Not used in Fork-Join
             
-                # Fork-Join queues
+                # ✅ EXTENDED: Fork-Join queues including Trilium
                 llm_processing_queue=self.queues["llm_processing"].size() + (1 if any(w.stage_name == "LLM Processing" and w.is_processing for w in self.workers) else 0),
                 trilium_upload_queue=self.queues["trilium_upload"].size() + (1 if any(w.stage_name == "Trilium Upload" and w.is_processing for w in self.workers) else 0),
             
@@ -936,14 +1064,20 @@ class PipelineManager(QThread):
                 active_workers=active_workers_list,
                 pipeline_health=health,
             
-                # ✅ HINZUGEFÜGT: Vollständige LLM-Metriken
+                # LLM metrics
                 total_llm_tokens=llm_summary['total_tokens'],
                 total_llm_cost=llm_summary['total_cost'],
                 active_llm_provider=llm_summary['current_provider'],
                 llm_videos_processed=llm_summary['videos_processed'],
                 average_llm_processing_time=llm_summary['average_processing_time'],
             
-                # ✅ HINZUGEFÜGT: Fork-Join spezifische Metriken
+                # ✅ EXTENDED: Trilium metrics
+                trilium_notes_created=llm_summary['trilium_notes_created'],
+                trilium_upload_success_rate=llm_summary['trilium_success_rate'],
+                average_trilium_upload_time=llm_summary['average_trilium_upload_time'],
+                trilium_server_status=llm_summary['trilium_server_status'],
+            
+                # Fork-Join metrics
                 pending_merges=(len(self.video_success_list) + len(self.video_failure_list) + 
                                len(self.transcript_success_list) + len(self.transcript_failure_list)),
                 video_stream_completed=self.stream_completion_stats['video_completed'],
@@ -953,20 +1087,18 @@ class PipelineManager(QThread):
         
             self.status_updated.emit(status)
         
-            # Enhanced Debug Logging mit LLM-Metriken
+            # ✅ EXTENDED: Enhanced debug logging with Trilium metrics
             self.logger.debug(
-                f"GUI Status Update mit LLM-Metriken",
+                f"Enhanced status update with Trilium metrics",
                 extra={
                     'total_queued': status.total_queued,
-                    'sequential_active': status.audio_download_queue + status.transcription_queue + status.analysis_queue,
-                    'stream_a_active': status.video_download_queue + status.upload_queue,
-                    'stream_b_active': status.llm_processing_queue + status.trilium_upload_queue,
-                    'final_archived': status.final_archived,
                     'llm_tokens': status.total_llm_tokens,
                     'llm_cost': status.total_llm_cost,
-                    'llm_provider': status.active_llm_provider,
-                    'llm_videos_processed': status.llm_videos_processed,
-                    'pending_merges': status.pending_merges
+                    'trilium_notes_created': status.trilium_notes_created,
+                    'trilium_success_rate': status.trilium_upload_success_rate,
+                    'trilium_server_status': status.trilium_server_status,
+                    'pending_merges': status.pending_merges,
+                    'final_archived': status.final_archived
                 }
             )
         
@@ -1003,12 +1135,13 @@ class PipelineManager(QThread):
         successful_videos = sum(1 for video in self.completed_videos if video.final_success)
         
         self.logger.info(
-            f"Fork-Join pipeline finished",
+            f"Enhanced Fork-Join pipeline finished",
             extra={
                 'total_videos': total_processed,
                 'successful': successful_videos,
                 'failed': total_processed - successful_videos,
                 'processing_errors': len(self.processing_errors),
+                'trilium_uploads': self.stream_completion_stats['trilium_uploads'],  # ✅ EXTENDED
                 'resolved_secrets_used': list(self.config_dict.get('resolved_secrets', {}).keys())
             }
         )
@@ -1032,7 +1165,7 @@ class PipelineManager(QThread):
         if self.state != PipelineState.RUNNING:
             return
         
-        self.logger.info("Stopping Fork-Join pipeline...")
+        self.logger.info("Stopping Enhanced Fork-Join pipeline...")
         self.state = PipelineState.STOPPING
         
         self.cleanup_workers()
@@ -1041,7 +1174,7 @@ class PipelineManager(QThread):
             self.wait(5000)
         
         self.state = PipelineState.IDLE
-        self.logger.info("Fork-Join pipeline stopped")
+        self.logger.info("Enhanced Fork-Join pipeline stopped")
     
     def cleanup_workers(self):
         """Alle Worker beenden"""
@@ -1075,8 +1208,15 @@ def integrate_pipeline_with_gui(main_window, config: AppConfig):
         )
     )
     
+    # ✅ NEW: Trilium completion signal
+    main_window.pipeline_manager.transcript_completed.connect(
+        lambda title, success: main_window.logger.info(
+            f"Trilium upload completed: {title} ({'Success' if success else 'Failed'})"
+        )
+    )
+    
     main_window.pipeline_manager.pipeline_finished.connect(
-        lambda total, success, errors: show_fork_join_pipeline_summary(main_window, total, success, errors)
+        lambda total, success, errors: show_enhanced_pipeline_summary(main_window, total, success, errors)
     )
     
     # Enhanced start_analysis method
@@ -1087,27 +1227,27 @@ def integrate_pipeline_with_gui(main_window, config: AppConfig):
             main_window.status_bar.showMessage("Please enter YouTube URLs")
             return
         
-        # Start Fork-Join pipeline
+        # Start Enhanced Fork-Join pipeline
         start_result = main_window.pipeline_manager.start_pipeline(urls_text)
         
         if isinstance(start_result, Ok):
-            main_window.status_bar.showMessage("Fork-Join Pipeline started - Processing URLs...")
+            main_window.status_bar.showMessage("Enhanced Fork-Join Pipeline started - Processing URLs...")
             main_window.url_input.clear()
         else:
             error = unwrap_err(start_result)
             main_window.status_bar.showMessage(f"Failed to start: {error.message}")
-            main_window.logger.error(f"Fork-Join Pipeline start failed: {error.message}")
+            main_window.logger.error(f"Enhanced Fork-Join Pipeline start failed: {error.message}")
     
     main_window.start_analysis = enhanced_start_analysis
 
-def show_fork_join_pipeline_summary(main_window, total: int, success: int, errors: List[str]):
-    """Enhanced Pipeline Summary Dialog für Fork-Join"""
+def show_enhanced_pipeline_summary(main_window, total: int, success: int, errors: List[str]):
+    """Enhanced Pipeline Summary Dialog für Fork-Join mit Trilium"""
     failed = total - success
     
     if failed == 0:
         msg = QMessageBox(main_window)
-        msg.setWindowTitle("Fork-Join Pipeline Complete")
-        msg.setText(f"✅ Successfully processed {success} of {total} videos!\n\nFork-Join architecture with zentrale secret resolution completed successfully.")
+        msg.setWindowTitle("Enhanced Fork-Join Pipeline Complete")
+        msg.setText(f"✅ Successfully processed {success} of {total} videos!\n\nEnhanced Fork-Join architecture with Trilium integration completed successfully.")
         msg.setIcon(QMessageBox.Information)
         msg.exec()
     else:
@@ -1116,8 +1256,8 @@ def show_fork_join_pipeline_summary(main_window, total: int, success: int, error
             error_text += f"\n... and {len(errors) - 10} more errors"
         
         msg = QMessageBox(main_window)
-        msg.setWindowTitle("Fork-Join Pipeline Complete with Errors")
-        msg.setText(f"Fork-Join Pipeline processed {total} videos:\n✅ {success} successful\n❌ {failed} failed")
+        msg.setWindowTitle("Enhanced Fork-Join Pipeline Complete with Errors")
+        msg.setText(f"Enhanced Fork-Join Pipeline processed {total} videos:\n✅ {success} successful\n❌ {failed} failed")
         msg.setDetailedText(f"Error details:\n{error_text}")
         msg.setIcon(QMessageBox.Warning)
         msg.exec()
@@ -1131,7 +1271,7 @@ if __name__ == "__main__":
     from yt_analyzer_config import SecureConfigManager
     
     # Setup
-    setup_logging("fork_join_pipeline_test", "DEBUG")
+    setup_logging("enhanced_fork_join_pipeline_test", "DEBUG")
     
     # Test configuration
     config_manager = SecureConfigManager()
@@ -1140,36 +1280,36 @@ if __name__ == "__main__":
     if isinstance(config_result, Ok):
         config = unwrap_ok(config_result)
         
-        # Create test pipeline manager
+        # Create enhanced pipeline manager
         pipeline_manager = PipelineManager(config)
         
-        print("✅ Fork-Join Pipeline Manager created successfully")
+        print("✅ Enhanced Fork-Join Pipeline Manager created successfully")
         print(f"   Queues: {list(pipeline_manager.queues.keys())}")
-        print(f"   State Collections: video_lists + transcript_lists")
+        print(f"   Trilium Integration: Active")  # ✅ EXTENDED
         print(f"   Archive Database: {pipeline_manager.archive_database}")
         print(f"   Resolved Secrets: {list(pipeline_manager.config_dict.get('resolved_secrets', {}).keys())}")
         
-        # Test queue operations
+        # Test enhanced queue operations
         test_urls = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         
-        print(f"\n🧪 Testing Fork-Join Pipeline startup...")
+        print(f"\n🧪 Testing Enhanced Fork-Join Pipeline startup...")
         start_result = pipeline_manager.start_pipeline(test_urls)
         
         if isinstance(start_result, Ok):
-            print("✅ Pipeline started successfully")
+            print("✅ Enhanced pipeline started successfully")
             
             # Let it run for a few seconds
             time.sleep(5)
             
             # Stop pipeline
             pipeline_manager.stop_pipeline()
-            print("✅ Pipeline stopped successfully")
+            print("✅ Enhanced pipeline stopped successfully")
         else:
             error = unwrap_err(start_result)
-            print(f"❌ Pipeline start failed: {error.message}")
+            print(f"❌ Enhanced pipeline start failed: {error.message}")
     
     else:
         error = unwrap_err(config_result)
         print(f"❌ Config loading failed: {error.message}")
     
-    print("\n🚀 Fork-Join Pipeline Manager Implementation with zentrale Secret-Resolution Complete!")
+    print("\n🚀 Enhanced Fork-Join Pipeline Manager with complete Trilium Integration Complete!")

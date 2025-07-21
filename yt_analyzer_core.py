@@ -509,7 +509,6 @@ class ArchiveDatabase:
                 import json
                 data['analysis_results'] = json.dumps(data['analysis_results'])
                 data['error_messages'] = json.dumps(data['error_messages'])
-                print(data)                
                 # Insert or replace
                 cursor.execute("""
                     INSERT OR REPLACE INTO processed_videos (
@@ -645,47 +644,72 @@ class ProcessingQueue:
     def __init__(self, name: str, maxsize: int = 0):
         self.name = name
         self.queue: queue.Queue[Union[ProcessObject, TranskriptObject]] = queue.Queue(maxsize=maxsize)
-        self.lock = threading.lock()
         self.logger = get_logger(f"Queue-{name}")
     
-    def put(self, obj: Union[ProcessObject, TranskriptObject]) -> Result[None, CoreError]:
-        """Add object to queue"""
-        with self.lock:
-            try:
-                self.queue.append(obj)
-                obj_type = "ProcessObject" if isinstance(obj, ProcessObject) else "TranskriptObject"
-                self.logger.debug(f"Added {obj_type} to queue: {obj.titel}")
-                return Ok(None)
-            except Exception as e:
-                return Err(CoreError(f"Failed to add object to queue: {e}"))
-    
-    def get(self) -> Result[Union[ProcessObject, TranskriptObject], CoreError]:
-        """Get object from queue"""
-        with self.lock:
-            try:
-                if not self.queue:
-                    return Err(CoreError("Queue is empty"))
+    def put(self, obj: Union[ProcessObject, TranskriptObject], timeout: Optional[float] = None) -> Result[None, CoreError]:
+        """Fügt Object zur Queue hinzu"""
+        try:
+            self.queue.put(obj, timeout=timeout)
             
-                obj = self.queue.pop(0)
-                obj_type = "ProcessObject" if isinstance(obj, ProcessObject) else "TranskriptObject"
-                self.logger.debug(f"Retrieved {obj_type} from queue: {obj.titel}")
-                return Ok(obj)
-            except Exception as e:
-                return Err(CoreError(f"Failed to get object from queue: {e}"))
+            obj_type = "ProcessObject" if isinstance(obj, ProcessObject) else "TranskriptObject"
+            self.logger.debug(
+                f"Object added to {self.name} queue",
+                extra={
+                    'queue_name': self.name,
+                    'object_type': obj_type,
+                    'unique_key': obj.titel,  # Both objects have titel
+                    'queue_size': self.queue.qsize()
+                }
+            )
+            
+            return Ok(None)
+            
+        except queue.Full:
+            context = ErrorContext.create(
+                "queue_put",
+                input_data={'queue_name': self.name, 'queue_size': self.queue.qsize()},
+                suggestions=["Increase queue size", "Check processing bottleneck"]
+            )
+            return Err(CoreError(f"Queue {self.name} is full", context))
+
+    def get(self, timeout: Optional[float] = None) -> Result[Union[ProcessObject, TranskriptObject], CoreError]:
+        """Holt Object aus Queue"""
+        try:
+            obj = self.queue.get(timeout=timeout)
+        
+            obj_type = "ProcessObject" if isinstance(obj, ProcessObject) else "TranskriptObject"
+            self.logger.debug(
+                f"Object retrieved from {self.name} queue",
+                extra={
+                    'queue_name': self.name,
+                    'object_type': obj_type,
+                    'unique_key': obj.titel,
+                    'remaining_size': self.queue.qsize()
+                }
+            )
+        
+            return Ok(obj)
+        
+        except queue.Empty:
+            context = ErrorContext.create(
+                "queue_get",
+                input_data={'queue_name': self.name},
+                suggestions=["Check if producer is running", "Verify queue input"]
+            )
+            return Err(CoreError(f"Queue {self.name} is empty", context))
       
     def task_done(self) -> None:
         """Markiert Task als abgeschlossen"""
         self.queue.task_done()
+
+    def empty(self) -> bool:
+        """Prüft ob Queue leer ist"""
+        return self.queue.empty()
     
     def size(self) -> int:
-        """Get current queue size"""
-        with self.lock:
-            return len(self.queue)
+        """Gibt aktuelle Queue-Größe zurück"""
+        return self.queue.qsize()
     
-    def is_empty(self) -> bool:
-        """Check if queue is empty"""
-        with self.lock:
-            return len(self.queue) == 0
 # =============================================================================
 # EXAMPLE USAGE & TESTING
 # =============================================================================

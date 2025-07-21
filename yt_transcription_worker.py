@@ -399,7 +399,6 @@ def transcribe_process_object(process_obj: ProcessObject, config: AppConfig) -> 
     
     # Update ProcessObject
     process_obj.transkript = transcript
-    print(transcript)
     process_obj.sprache = detected_language
     process_obj.update_stage("transcribed")
     
