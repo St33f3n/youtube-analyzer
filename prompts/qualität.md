@@ -1,28 +1,17 @@
-# Qualitäts-Analyse
+# Qualitäts-Bewertung
 
-Bewerte die Qualität und Struktur des YouTube-Video-Inhalts.
+Bewerte die **Produktions- und Inhaltsqualität**:
 
-## Aufgabe
-Analysiere die Präsentationsqualität, Struktur und Verständlichkeit des Videos.
+## Kriterien:
+1. **Struktur**: Klarer Aufbau und logische Gliederung
+2. **Verständlichkeit**: Gut erklärt und nachvollziehbar
+3. **Audio-Qualität**: Deutliche Sprache, wenig Störgeräusche
+4. **Professionalität**: Vorbereitung und Präsentation
 
-## Kriterien
-- Klare Struktur und logischer Aufbau
-- Verständliche Erklärungen
-- Vollständigkeit der behandelten Themen
-- Professionalität der Präsentation
-
-## Ausgabe (JSON)
-```json
-{
-  "quality_score": float (0.0-1.0),
-  "confidence": float (0.0-1.0),
-  "structure_rating": "poor|fair|good|excellent",
-  "clarity_rating": "poor|fair|good|excellent",
-  "completeness": "incomplete|partial|complete|comprehensive",
-  "issues": ["issue1", "issue2", ...],
-  "strengths": ["strength1", "strength2", ...]
-}
-```
-
-## Transkript
-{transcript}
+## Bewertung:
+- **1.0**: Professionelle, hochwertige Produktion
+- **0.8**: Gute Qualität mit kleinen Schwächen
+- **0.6**: Durchschnittliche Qualität
+- **0.4**: Niedrige Qualität, aber verwendbar
+- **0.2**: Schlechte Qualität
+- **0.0**: Unbrauchbar schlecht
