@@ -220,6 +220,8 @@ def process_with_openai(
                     with get_openai_callback() as callback:
                         response = llm.invoke(messages)
 
+
+                    
                     # Success → TranskriptObject aktualisieren
                     processing_time = time.time() - start_time
 
@@ -255,8 +257,13 @@ def process_with_openai(
                     logger.warning(f"OpenAI attempt {attempt + 1} failed: {e}")
 
                     if attempt < retry_attempts - 1:
-                        logger.debug(f"Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
+                        # Rate limit check
+                        if "429" in str(e) or "rate limit" in str(e).lower():
+                            logger.warning("Rate limit hit, waiting 60s...")
+                            time.sleep(60)
+                        else:
+                            logger.debug(f"Retrying in {retry_delay} seconds...")
+                            time.sleep(retry_delay)
                         continue
                     else:
                         # Final failure
@@ -465,10 +472,14 @@ def process_with_anthropic(
 
                 except Exception as e:
                     logger.warning(f"Anthropic attempt {attempt + 1} failed: {e}")
-
                     if attempt < retry_attempts - 1:
-                        logger.debug(f"Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
+                        # Rate limit check
+                        if "429" in str(e) or "rate limit" in str(e).lower():
+                            logger.warning("Rate limit hit, waiting 60s...")
+                            time.sleep(60)
+                        else:
+                            logger.debug(f"Retrying in {retry_delay} seconds...")
+                            time.sleep(retry_delay)
                         continue
                     else:
                         # Final failure
@@ -655,10 +666,14 @@ def process_with_google(
 
                 except Exception as e:
                     logger.warning(f"Google attempt {attempt + 1} failed: {e}")
-
                     if attempt < retry_attempts - 1:
-                        logger.debug(f"Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
+                        # Rate limit check
+                        if "429" in str(e) or "rate limit" in str(e).lower():
+                            logger.warning("Rate limit hit, waiting 60s...")
+                            time.sleep(60)
+                        else:
+                            logger.debug(f"Retrying in {retry_delay} seconds...")
+                            time.sleep(retry_delay)
                         continue
                     else:
                         # Final failure

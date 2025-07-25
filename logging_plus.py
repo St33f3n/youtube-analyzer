@@ -63,6 +63,7 @@ def setup_logging(
             "<level>{level: <8}</level> | "
             "<cyan>{extra[component]}</cyan> | "
             "<level>{message}</level>"
+            "<yellow>{extra}</yellow>"
         )
         logger.add(
             sys.stdout,

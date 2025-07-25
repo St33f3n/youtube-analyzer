@@ -251,7 +251,7 @@ class OllamaConfig(BaseModel):
     """Ollama/LLM-Konfiguration (unchanged)"""
 
     host: str = Field(default="http://localhost:11434", description="Ollama API Host")
-    model: str = Field(default="gemma2", description="LLM Model Name")
+    model: str = Field(default="gemma3:4b", description="LLM Model Name")
     temperature: float = Field(
         default=0.1, ge=0.0, le=2.0, description="Model Temperature"
     )
@@ -307,7 +307,7 @@ class LLMProcessingConfig(BaseModel):
     def get_provider_model_mapping(self) -> Dict[str, List[str]]:
         """Mapping verfügbarer Models pro Provider"""
         return {
-            "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"],
+            "openai": ["o4-mini-2025-04-16", "gpt-4.1-nano-2025-04-14", "o3-2025-04-16"],
             "anthropic": [
                 "claude-sonnet-4-20250514",
                 "claude-3-5-haiku-20241022",

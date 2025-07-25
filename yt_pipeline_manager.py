@@ -11,12 +11,12 @@ from typing import List, Dict, Optional, Any, Union
 from dataclasses import dataclass, field
 from enum import Enum
 import threading
-
+import gc
 from PySide6.QtCore import QThread, Signal, QTimer
 from PySide6.QtWidgets import QMessageBox
-
+import queue
 # Import our core libraries
-from core_types import Result, Ok, Err, unwrap_ok, unwrap_err, CoreError
+from core_types import Result, Ok, Err, unwrap_ok, unwrap_err, CoreError, ErrorContext
 from yt_analyzer_core import (
     ProcessObject,
     TranskriptObject,
@@ -325,27 +325,40 @@ class BaseWorker(QThread):
         self.current_object: Optional[Union[ProcessObject, TranskriptObject]] = None
 
     def run(self):
-        """Enhanced Worker-Loop mit Fork-Join-Object-Support"""
-        self.logger.info(f"{self.stage_name} worker started")
+        """
+        Enhanced Worker-Loop mit proper should_stop-Checks
+        LÖST: Blocking Queue.get() verhindert graceful shutdown
+        """
+        self.logger.info(f"🏃 {self.stage_name} worker started")
 
         while not self.should_stop.is_set():
             try:
-                # Get Object from queue (ProcessObject oder TranskriptObject)
-                obj_result = self.input_queue.get()
+                # CRITICAL: Queue.get() mit Timeout, damit should_stop gecheckt werden kann
+                obj_result = self.input_queue.get(timeout=1.0)  # 1 Sekunde Timeout
 
                 if isinstance(obj_result, Err):
-                    self.msleep(100)  # Queue empty, wait and continue
+                    # Queue empty nach Timeout - das ist normal
                     continue
 
                 obj = unwrap_ok(obj_result)
                 self.current_object = obj
                 self.is_processing = True
 
+                # Double-check should_stop vor Processing (Race-Condition-Schutz)
+                if self.should_stop.is_set():
+                    self.logger.debug(f"{self.stage_name} stopping before processing {getattr(obj, 'titel', 'unknown')}")
+                    break
+
                 # Update status
                 self.stage_status_changed.emit(self.stage_name, self.input_queue.size())
 
                 # Process object
                 process_result = self.process_object(obj)
+
+                # Check should_stop nach Processing
+                if self.should_stop.is_set():
+                    self.logger.debug(f"{self.stage_name} stopping after processing")
+                    break
 
                 if isinstance(process_result, Ok):
                     processed_obj = unwrap_ok(process_result)
@@ -386,13 +399,34 @@ class BaseWorker(QThread):
                 self.current_object = None
                 self.is_processing = False
 
+            except queue.Empty:
+                # Timeout bei Queue.get() - das ist normal, weiter mit should_stop-Check
+                continue
+        
             except Exception as e:
-                self.logger.error(f"Unexpected error in {self.stage_name} worker: {e}")
+                if not self.should_stop.is_set():  # Nur loggen wenn nicht intentional gestoppt
+                    self.logger.error(
+                        f"Unexpected error in {self.stage_name} worker: {e}",
+                        extra={
+                            'stage_name': self.stage_name,
+                            'error_type': type(e).__name__,
+                            'current_object': getattr(self.current_object, 'titel', None) if self.current_object else None
+                        }
+                    )
                 self.current_object = None
                 self.is_processing = False
-                time.sleep(1)
+                time.sleep(1)  # Kurze Pause bei Fehlern
 
-        self.logger.info(f"{self.stage_name} worker stopped")
+        # Clean shutdown logging
+        self.logger.info(
+            f"✅ {self.stage_name} worker stopped cleanly",
+            extra={
+                'stage_name': self.stage_name,
+                'stop_reason': 'should_stop_set' if self.should_stop.is_set() else 'loop_exit',
+                'was_processing': self.is_processing
+            }
+        )
+
 
     def process_object(
         self, obj: Union[ProcessObject, TranskriptObject]
@@ -411,10 +445,26 @@ class BaseWorker(QThread):
         return "unknown"
 
     def stop_worker(self):
-        """Graceful worker shutdown"""
+        """
+        Graceful worker shutdown mit enhanced debugging
+        VERBESSERT: Besseres Logging für QThread-Lifecycle-Debugging
+        """
+        self.logger.debug(f"🛑 Stopping {self.stage_name} worker...")
+    
+        # Set stop signal
         self.should_stop.set()
-        if self.isRunning():
-            self.wait(5000)
+    
+        # Enhanced logging für Debugging
+        self.logger.debug(
+            f"Stop signal set for {self.stage_name}",
+            extra={
+                'stage_name': self.stage_name,
+                'thread_running': self.isRunning(),
+                'thread_finished': self.isFinished(),
+                'current_object': getattr(self.current_object, 'titel', None) if self.current_object else None,
+                'is_processing': self.is_processing
+            }
+        )
 
 
 # =============================================================================
@@ -462,7 +512,6 @@ class TranscriptionWorker(BaseWorker):
 
     def get_next_stage_name(self) -> str:
         return "Analysis"
-
 
 class AnalysisWorker(BaseWorker):
     """Analysis Worker - FORK POINT Implementation (unchanged - kein Secret-Dependency)"""
@@ -828,7 +877,7 @@ class PipelineManager(QThread):
         return config_dict
 
     def start_pipeline(self, urls_text: str) -> Result[None, CoreError]:
-        """Startet Pipeline mit synchroner Metadata-Extraktion"""
+        """Startet Pipeline mit explizitem Worker-Cleanup-Check"""
         if self.state != PipelineState.IDLE:
             return Err(CoreError("Pipeline already running"))
 
@@ -836,11 +885,30 @@ class PipelineManager(QThread):
         self.processing_errors.clear()
         self.completed_videos.clear()
 
+        # CRITICAL: Expliziter Worker-Cleanup vor Start
+        if self.workers:
+            self.logger.info("🔄 Cleaning up previous workers before starting new pipeline...")
+            self.cleanup_workers()
+        
+            # Sicherheitscheck: Sind wirklich alle Worker weg?
+            running_workers = [w.stage_name for w in self.workers if w.isRunning()]
+            if running_workers:
+                context = ErrorContext.create(
+                    "start_pipeline_worker_check",
+                    input_data={"running_workers": running_workers},
+                    suggestions=[
+                        "Wait longer for workers to stop",
+                        "Check for deadlocked threads",
+                        "Restart application if problem persists"
+                    ]
+                )
+                return Err(CoreError(f"Previous workers still running: {running_workers}", context))
+
         self.llm_metrics.reset_metrics()
         self.stream_completion_stats = {
             "video_completed": 0,
             "transcript_completed": 0,
-            "trilium_uploads": 0,  # ✅ EXTENDED
+            "trilium_uploads": 0,
             "final_archived": 0,
             "video_failed": 0,
             "transcript_failed": 0,
@@ -853,9 +921,9 @@ class PipelineManager(QThread):
             self.transcript_success_list.clear()
             self.transcript_failure_list.clear()
 
-        self.logger.info("Starting Fork-Join pipeline with zentrale secret resolution")
+        self.logger.info("🚀 Starting clean Fork-Join pipeline")
 
-        # SYNCHRONE Metadata-Extraktion (no worker needed)
+        # SYNCHRONE Metadata-Extraktion (rest bleibt unverändert)
         objects_result = process_urls_to_objects(
             urls_text, self.config.processing.__dict__
         )
@@ -890,7 +958,7 @@ class PipelineManager(QThread):
         self.start()  # Start QThread
 
         self.logger.info(
-            f"Fork-Join pipeline started with {len(process_objects)} videos"
+            f"✅ Clean Fork-Join pipeline started with {len(process_objects)} videos"
         )
         return Ok(None)
 
@@ -1138,6 +1206,25 @@ class PipelineManager(QThread):
         """✅ EXTENDED: Archive with Trilium note ID persistence"""
         archive_result = self.archive_database.save_processed_video(archive_obj)
 
+        from yt_trilium_uploader import TriliumUploader
+
+        trilium = TriliumUploader(self.config_dict)
+
+        etapi = trilium._init_trilium_client().value
+        try:
+            result = etapi.create_attribute(
+                noteId=archive_obj.trilium_note_id,
+                type="label",
+                name="nextcloud_link",
+                value=str(archive_obj.nextcloud_link),
+                isInheritable=False,
+            )
+            if result:
+                self.logger.debug(f"Created nextcloud link for: {archive_obj.titel[-10]}")
+        except Exception as e:
+            self.logger.warning(f"Failed to add nextcloud link: {e}")
+
+        
         if isinstance(archive_result, Ok):
             self.stream_completion_stats["final_archived"] += 1
             self.completed_videos.append(archive_obj)
@@ -1385,27 +1472,130 @@ class PipelineManager(QThread):
         self.state = PipelineState.IDLE
 
     def stop_pipeline(self):
-        """Pipeline stoppen"""
-        if self.state != PipelineState.RUNNING:
+        """
+        Pipeline stoppen mit verbesserter Worker-Shutdown-Reihenfolge
+        VERBESSERT: Bessere State-Management und Worker-Status-Logging
+        """
+        if self.state not in [PipelineState.RUNNING, PipelineState.STOPPING]:
+            self.logger.debug(f"Pipeline not running (state: {self.state.value}), nothing to stop")
             return
 
-        self.logger.info("Stopping Enhanced Fork-Join pipeline...")
+        self.logger.info("🛑 Stopping Enhanced Fork-Join pipeline...")
+    
+        # Phase 1: State auf STOPPING setzen
+        previous_state = self.state
         self.state = PipelineState.STOPPING
 
+        # Phase 2: Worker-Status vor Shutdown loggen (für Debugging)
+        if self.workers:
+            running_workers = []
+            processing_workers = []
+        
+            for worker in self.workers:
+                if worker.isRunning():
+                    running_workers.append(worker.stage_name)
+                    if getattr(worker, 'is_processing', False):
+                        processing_workers.append(worker.stage_name)
+        
+            self.logger.info(
+                f"Pipeline stop initiated: {len(running_workers)} running workers",
+                extra={
+                    'previous_state': previous_state.value,
+                    'running_workers': running_workers,
+                    'processing_workers': processing_workers,
+                    'total_workers': len(self.workers)
+                }
+            )
+
+        # Phase 3: Workers cleanup (enhanced version)
+        cleanup_start_time = time.time()
         self.cleanup_workers()
+        cleanup_duration = time.time() - cleanup_start_time
 
+        # Phase 4: QThread selbst stoppen falls läuft
         if self.isRunning():
-            self.wait(5000)
+            self.logger.debug("Stopping pipeline manager QThread...")
+            if not self.wait(5000):  # 5 Sekunden Timeout
+                self.logger.warning("Pipeline manager QThread did not stop gracefully")
 
+        # Phase 5: Final state
         self.state = PipelineState.IDLE
-        self.logger.info("Enhanced Fork-Join pipeline stopped")
+    
+        self.logger.info(
+            f"✅ Enhanced Fork-Join pipeline stopped",
+            extra={
+                'cleanup_duration_seconds': round(cleanup_duration, 2),
+                'final_state': self.state.value,
+                'successful_stop': True
+            }
+        )
+
 
     def cleanup_workers(self):
-        """Alle Worker beenden"""
+        """
+        Alle Worker sauber beenden mit explizitem QThread.wait()
+        LÖST: Race-Condition bei Pipeline-Restart
+        """
+        if not self.workers:
+            self.logger.debug("No workers to cleanup")
+            return
+
+        total_workers = len(self.workers)
+        self.logger.info(f"🛑 Stopping {total_workers} workers gracefully...")
+
+        # Phase 1: Allen Workern Signal zum Stoppen geben
         for worker in self.workers:
-            worker.stop_worker()
+            try:
+                worker.stop_worker()  # Setzt should_stop Event
+                self.logger.debug(f"Stop signal sent to {worker.stage_name}")
+            except Exception as e:
+                self.logger.warning(f"Failed to send stop signal to {worker.stage_name}: {e}")
+
+        # Phase 2: Explizit auf Thread-Beendigung warten
+        successful_stops = 0
+        forced_terminations = 0
+    
+        for worker in self.workers:
+            if not worker.isRunning():
+                self.logger.debug(f"✅ {worker.stage_name} already stopped")
+                successful_stops += 1
+                continue
+
+            self.logger.debug(f"⏳ Waiting for {worker.stage_name} to finish...")
+        
+            # CRITICAL: Explizites wait() mit Timeout
+            if worker.wait(5000):  # 5 Sekunden Timeout
+                self.logger.debug(f"✅ {worker.stage_name} stopped gracefully")
+                successful_stops += 1
+            else:
+                # Graceful shutdown failed → Terminate
+                self.logger.warning(f"⚠️ {worker.stage_name} did not stop gracefully, terminating...")
+                try:
+                    worker.terminate()
+                    if worker.wait(2000):  # 2 Sekunden nach terminate
+                        self.logger.warning(f"🔥 {worker.stage_name} terminated forcefully")
+                        forced_terminations += 1
+                    else:
+                        self.logger.error(f"❌ {worker.stage_name} could not be terminated!")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to terminate {worker.stage_name}: {e}")
+
+        # Phase 3: Worker-Liste leeren und Statistics
         self.workers.clear()
 
+        self.logger.info(
+            f"✅ Worker cleanup completed: {successful_stops} graceful, {forced_terminations} terminated",
+            extra={
+                'total_workers': total_workers,
+                'successful_stops': successful_stops,
+                'forced_terminations': forced_terminations,
+                'cleanup_success': successful_stops + forced_terminations == total_workers
+            }
+        )
+
+        # Kurze Pause für Qt-Cleanup
+        time.sleep(0.1)
+    
     def run(self):
         """QThread main loop"""
         while self.state == PipelineState.RUNNING:
